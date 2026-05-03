@@ -1,4 +1,4 @@
-# minisymphony
+# symphony-go
 
 A small Go orchestrator that drives Codex or Claude Code on GitHub issues
 labeled `symphony:ready`, posts a plan, decides approval (rules + reviewer
@@ -15,21 +15,21 @@ Pre-alpha. Skeleton only. Implementation milestones in `SPEC.md` §15.
 
 ```sh
 # 1. Install
-go install ./cmd/minisymphony
+go install ./cmd/symphony-go
 
 # 2. Create config (lives outside the repo on purpose)
-mkdir -p ~/.minisymphony
-cp testdata/config.example.yml ~/.minisymphony/config.yml
+mkdir -p ~/.symphony-go
+cp testdata/config.example.yml ~/.symphony-go/config.yml
 # edit repo.full_name, repo.local_path, etc.
 
 # 3. Add WORKFLOW.md prompt template inside your repo
 cp testdata/WORKFLOW.example.md /path/to/repo/WORKFLOW.md
 
 # 4. Verify the setup
-GITHUB_TOKEN=ghp_... minisymphony doctor --config ~/.minisymphony/config.yml
+GITHUB_TOKEN=ghp_... symphony-go doctor --config ~/.symphony-go/config.yml
 
 # 5. Run
-GITHUB_TOKEN=ghp_... minisymphony run --config ~/.minisymphony/config.yml
+GITHUB_TOKEN=ghp_... symphony-go run --config ~/.symphony-go/config.yml
 ```
 
 ## Module path

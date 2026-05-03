@@ -1,6 +1,6 @@
 # Built binaries
-/minisymphony
-/cmd/minisymphony/minisymphony
+/symphony-go
+/cmd/symphony-go/symphony-go
 
 # Go build artifacts
 *.exe
@@ -22,8 +22,8 @@ coverage.txt
 .DS_Store
 Thumbs.db
 
-# minisymphony runtime data
-.minisymphony/
+# symphony-go runtime data
+.symphony-go/
 
 # Local environment overrides
 *.local.yml

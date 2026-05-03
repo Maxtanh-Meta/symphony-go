@@ -1,10 +1,10 @@
 // Package state provides on-disk JSON job state persistence and a
-// process-wide flock for the minisymphony orchestrator.
+// process-wide flock for the symphony-go orchestrator.
 //
-// State layout under rootDir (typically ".minisymphony/state"):
+// State layout under rootDir (typically ".symphony-go/state"):
 //
 //	<rootDir>/jobs/{issue_number}.json   // one file per job
-//	<rootDir>/../lock                    // sibling flock file (".minisymphony/lock")
+//	<rootDir>/../lock                    // sibling flock file (".symphony-go/lock")
 //
 // All writes are atomic: write to a sibling .tmp file, fsync, rename.
 package state
@@ -27,7 +27,7 @@ import (
 // Store is a thread-safe (within a process) handle to the on-disk job
 // state directory. Cross-process exclusion is provided by AcquireLock.
 type Store struct {
-	rootDir string // absolute or relative path to the state root (e.g. ".minisymphony/state")
+	rootDir string // absolute or relative path to the state root (e.g. ".symphony-go/state")
 	jobsDir string // <rootDir>/jobs
 	lockDir string // <rootDir>/.. (where the "lock" file lives)
 
@@ -37,7 +37,7 @@ type Store struct {
 }
 
 // NewStore opens (and creates if needed) the state directory layout.
-// rootDir is typically ".minisymphony/state". The jobs/ subdirectory and
+// rootDir is typically ".symphony-go/state". The jobs/ subdirectory and
 // the parent directory (used for the flock file) are created with 0o755.
 func NewStore(rootDir string) (*Store, error) {
 	if rootDir == "" {
@@ -76,7 +76,7 @@ func (s *Store) AcquireLock() (func() error, error) {
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("state: another minisymphony process holds %q: %w", lockPath, err)
+		return nil, fmt.Errorf("state: another symphony-go process holds %q: %w", lockPath, err)
 	}
 	var once sync.Once
 	release := func() error {

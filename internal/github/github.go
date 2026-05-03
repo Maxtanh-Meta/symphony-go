@@ -1,5 +1,5 @@
 // Package github wraps the go-github client for the small set of
-// operations minisymphony needs: listing ready issues, atomic label
+// operations symphony-go needs: listing ready issues, atomic label
 // transitions, comments, collaborator permission checks, and draft PR
 // creation. It exposes a Client interface and an InMemoryFake for tests.
 package github
@@ -33,7 +33,7 @@ type PullRequest struct {
 	State  string
 }
 
-// Client is the minimal GitHub surface used by minisymphony.
+// Client is the minimal GitHub surface used by symphony-go.
 type Client interface {
 	// ListReadyIssues returns open issues carrying readyLabel. Pull
 	// requests (which the issues API folds into the same listing) are

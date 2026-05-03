@@ -1,4 +1,4 @@
-// Package approval implements minisymphony's auto-approval logic: parsing
+// Package approval implements symphony-go's auto-approval logic: parsing
 // the planner's `## Scope` block, evaluating auto.rules against an issue,
 // and verifying that an implementation diff stayed within the claimed
 // scope (SPEC §10).

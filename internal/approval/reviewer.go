@@ -1,4 +1,4 @@
-// Package approval implements minisymphony's auto-approval logic.
+// Package approval implements symphony-go's auto-approval logic.
 //
 // This file holds the reviewer-agent driver: it renders a fixed,
 // non-user-controlled prompt, runs a separate AgentRunner instance in

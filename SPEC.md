@@ -1,4 +1,4 @@
-# minisymphony — Minimal Go Symphony for GitHub Issues
+# symphony-go — Minimal Go Symphony for GitHub Issues
 
 A small Go binary. Reads GitHub issues labeled `symphony:ready`, runs Codex
 or Claude Code in an isolated git worktree, posts a plan, decides approval
@@ -20,9 +20,9 @@ diff verification gate.
 ## 1. Goal
 
 ```
-minisymphony run    --config ~/.minisymphony/config.yml
-minisymphony run    --once --config ~/.minisymphony/config.yml
-minisymphony doctor --config ~/.minisymphony/config.yml
+symphony-go run    --config ~/.symphony-go/config.yml
+symphony-go run    --once --config ~/.symphony-go/config.yml
+symphony-go doctor --config ~/.symphony-go/config.yml
 ```
 
 One process per machine (enforced by flock). One issue at a time by default.
@@ -34,7 +34,7 @@ state machine.
 ## 2. Two files, two locations — intentionally
 
 ```
-~/.minisymphony/config.yml   # config, never visible to the agent
+~/.symphony-go/config.yml   # config, never visible to the agent
 <repo>/WORKFLOW.md           # prompt template, may be edited by humans
 ```
 
@@ -189,7 +189,7 @@ The orchestrator MUST:
    config back into a repo. Hard fail at startup; also checked by `doctor`.
 4. Before commit, scan the staged diff for any change to the path resolved
    from `repo.workflow_file`. If present, do not block, but post a comment:
-   `[minisymphony] agent modified WORKFLOW.md; review carefully before
+   `[symphony-go] agent modified WORKFLOW.md; review carefully before
    merge`. The PR body must contain the same notice under `## Warnings`.
 5. Pass neither the config path nor any config field as an env var or CLI
    arg to the agent subprocess. Only orchestrator-process code reads
@@ -202,7 +202,7 @@ The orchestrator MUST:
 ```
 issue with label `symphony:ready`
   ├─ claim:                           replace label → `planning`
-  ├─ create worktree at <repo>/.minisymphony/wt/issue-{n}-{slug}/
+  ├─ create worktree at <repo>/.symphony-go/wt/issue-{n}-{slug}/
   ├─ run hooks.after_create (once per new worktree)
   ├─ hooks.before_run + run agent in planning + hooks.after_run
   ├─ post plan as issue comment, save plan_comment_id, parse `## Scope`
@@ -229,7 +229,7 @@ PR metadata.
 ## 4. Repo layout
 
 ```
-cmd/minisymphony/main.go
+cmd/symphony-go/main.go
 internal/
   types/         # shared types: Issue, Job, Config, PlanScope, RunRequest...
   config/        # parse + validate config.yml; load WORKFLOW.md
@@ -279,15 +279,15 @@ runtime/validation/diff-drift error.
 
 ## 6. Local state
 
-`.minisymphony/state/jobs/{issue_number}.json`:
+`.symphony-go/state/jobs/{issue_number}.json`:
 
 ```json
 {
   "issue_number": 123,
   "repo": "OWNER/REPO",
   "status": "awaiting_approval",
-  "workspace_root": ".minisymphony/wt/issue-123-fix-foo",
-  "repo_path": ".minisymphony/wt/issue-123-fix-foo/repo",
+  "workspace_root": ".symphony-go/wt/issue-123-fix-foo",
+  "repo_path": ".symphony-go/wt/issue-123-fix-foo/repo",
   "branch": "symphony/issue-123-fix-foo",
   "plan_comment_id": 12345,
   "plan_text": "...",
@@ -306,7 +306,7 @@ runtime/validation/diff-drift error.
 }
 ```
 
-`.minisymphony/lock` is `flock`'d at startup. A second `minisymphony run`
+`.symphony-go/lock` is `flock`'d at startup. A second `symphony-go run`
 on the same machine exits with a clear error.
 
 Atomic write: write to `{path}.tmp`, `fsync`, rename.
@@ -320,7 +320,7 @@ any dispatch. Inputs:
 
 - every open issue in the repo carrying at least one `symphony:*` label
   (one paginated issues-search call)
-- every file under `.minisymphony/state/jobs/`
+- every file under `.symphony-go/state/jobs/`
 
 For each (issue, local-state) pair, apply exactly one row. Match is on the
 tuple `(local.status, github.symphony_label, issue.state)`. The table is
@@ -352,7 +352,7 @@ Rules that apply to every row:
 
 - Reconciliation never starts an agent.
 - Reconciliation never deletes a workspace.
-- Comments posted by reconcile are prefixed `[minisymphony reconcile]` and
+- Comments posted by reconcile are prefixed `[symphony-go reconcile]` and
   capped at 1000 chars.
 - API errors are logged and counted; reconcile continues for remaining rows.
 - After all rows: log `reconcile: N rows processed, K transitioned, M errors`.
@@ -362,7 +362,7 @@ Rules that apply to every row:
 ## 8. Worktree
 
 ```
-.minisymphony/wt/issue-{number}-{slug}/
+.symphony-go/wt/issue-{number}-{slug}/
 ├── repo/   # git worktree
 └── home/   # HOME for the agent subprocess (also TMPDIR=home/tmp)
 ```
@@ -591,7 +591,7 @@ if approval.mode == "auto" and auto.verify_diff_matches_plan:
 run each validation command in repo cwd, redacted output
   any failure: post summary, set failed, stop
 git add -A
-git -c user.name=minisymphony -c user.email=noreply@local commit -m "Implement issue #<n>"
+git -c user.name=symphony-go -c user.email=noreply@local commit -m "Implement issue #<n>"
 git push origin <branch>                          # see auth note below
 create draft PR (truncate body to 60000 chars)
 post comment linking PR
@@ -616,7 +616,7 @@ PR body includes the `approval_path` (`rules` / `reviewer` / `human` /
 
 ## 12. Doctor
 
-Run `minisymphony doctor` to verify:
+Run `symphony-go doctor` to verify:
 
 1. `<resolved config>` exists, parses, validates.
 2. `<resolved config>` is NOT inside any `repo.local_path`. Hard fail.
@@ -642,7 +642,7 @@ Non-zero exit on any failure. No `--fix` flag in MVP.
 
 ## 13. Audit
 
-`.minisymphony/audit/{issue_number}.jsonl`. One event per action via `slog`
+`.symphony-go/audit/{issue_number}.jsonl`. One event per action via `slog`
 JSON handler. Redact configured patterns and the values of any allowlist
 env vars before writing.
 
@@ -702,7 +702,7 @@ independently once shared types are defined.
 
 **M0. Skeleton.**
 - `git init`, `go mod init`, `.gitignore`, `README.md`.
-- `cmd/minisymphony/main.go` with stub subcommands.
+- `cmd/symphony-go/main.go` with stub subcommands.
 - `internal/types/types.go` defining: `Issue`, `IssueComment`, `Job`,
   `JobStatus`, `Config`, `PlanScope`, `RunRequest`, `RunResult`, `Phase`,
   `ReviewerDecision`, `ApprovalMode`, `ApprovalPath`.
@@ -734,7 +734,7 @@ independently once shared types are defined.
 - `internal/orchestrator/job.go`: per-job state machine (claim → planning
   → approval → implementation → PR).
 - `internal/orchestrator/reconcile.go`: 19-row table.
-- `cmd/minisymphony/main.go`: wire `run`, `run --once`, `doctor`.
+- `cmd/symphony-go/main.go`: wire `run`, `run --once`, `doctor`.
 
 **M5. Tests + hardening.** [continuous]
 - Unit tests per package.
@@ -748,7 +748,7 @@ independently once shared types are defined.
 
 **M7. Optional, post-MVP.**
 - `codex app-server` runner with streaming events.
-- `minisymphony status` command.
+- `symphony-go status` command.
 - Multi-turn continuation.
 - Workspace cleanup command.
 
@@ -759,10 +759,10 @@ independently once shared types are defined.
 ```
 1. go test ./... passes
 2. doctor exits 0 on a real repo
-3. minisymphony run --once processes a real issue end-to-end with fakeRunner
+3. symphony-go run --once processes a real issue end-to-end with fakeRunner
 4. claude runner completes a planning run on a real issue
 5. codex runner (exec mode) completes a planning run on a real issue
-6. config in ~/.minisymphony/, never inside the workspace; doctor enforces
+6. config in ~/.symphony-go/, never inside the workspace; doctor enforces
 7. agent subprocess receives neither GITHUB_TOKEN nor SSH_AUTH_SOCK
 8. PRs are draft; orchestrator never merges
 9. flock prevents two instances on the same machine

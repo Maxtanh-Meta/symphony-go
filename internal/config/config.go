@@ -1,5 +1,5 @@
-// Package config parses, validates, and loads minisymphony's external
-// configuration: ~/.minisymphony/config.yml and the in-repo WORKFLOW.md
+// Package config parses, validates, and loads symphony-go's external
+// configuration: ~/.symphony-go/config.yml and the in-repo WORKFLOW.md
 // prompt template. It also implements the config integrity guard (SHA-256
 // drift detection and the "config must not be inside the repo" invariant)
 // described in SPEC §2.

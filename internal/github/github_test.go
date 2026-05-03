@@ -378,16 +378,16 @@ func TestFake_AddReaction(t *testing.T) {
 	}
 }
 
-// TestRealClient_Smoke is skipped unless MINISYMPHONY_GITHUB_E2E=1 and a
+// TestRealClient_Smoke is skipped unless SYMPHONY_GO_GITHUB_E2E=1 and a
 // token + repo are provided. Pure-fake test runs never hit the network.
 func TestRealClient_Smoke(t *testing.T) {
-	if os.Getenv("MINISYMPHONY_GITHUB_E2E") != "1" {
-		t.Skip("set MINISYMPHONY_GITHUB_E2E=1 to run real-network smoke")
+	if os.Getenv("SYMPHONY_GO_GITHUB_E2E") != "1" {
+		t.Skip("set SYMPHONY_GO_GITHUB_E2E=1 to run real-network smoke")
 	}
 	token := os.Getenv("GITHUB_TOKEN")
-	full := os.Getenv("MINISYMPHONY_GITHUB_REPO")
+	full := os.Getenv("SYMPHONY_GO_GITHUB_REPO")
 	if token == "" || full == "" {
-		t.Skip("GITHUB_TOKEN and MINISYMPHONY_GITHUB_REPO required")
+		t.Skip("GITHUB_TOKEN and SYMPHONY_GO_GITHUB_REPO required")
 	}
 	c, err := NewClient(context.Background(), token, full)
 	if err != nil {

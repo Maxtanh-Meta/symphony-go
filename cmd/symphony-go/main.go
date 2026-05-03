@@ -1,4 +1,4 @@
-// Command minisymphony is a local-first orchestrator that drives Codex or
+// Command symphony-go is a local-first orchestrator that drives Codex or
 // Claude Code on GitHub issues. See SPEC.md for the design.
 package main
 
@@ -34,16 +34,16 @@ func main() {
 }
 
 func usage(w *os.File) {
-	fmt.Fprintln(w, `minisymphony — drives Codex/Claude on GitHub issues
+	fmt.Fprintln(w, `symphony-go — drives Codex/Claude on GitHub issues
 
 usage:
-  minisymphony run    [--once] --config <path>
-  minisymphony doctor          --config <path>
+  symphony-go run    [--once] --config <path>
+  symphony-go doctor          --config <path>
 
 If --config is omitted, the following are searched in order:
-  $MINISYMPHONY_CONFIG
-  $XDG_CONFIG_HOME/minisymphony/config.yml
-  ~/.minisymphony/config.yml`)
+  $SYMPHONY_GO_CONFIG
+  $XDG_CONFIG_HOME/symphony-go/config.yml
+  ~/.symphony-go/config.yml`)
 }
 
 func runCommand(args []string) int {
@@ -60,7 +60,7 @@ func runCommand(args []string) int {
 	}
 	slog.Info("run", "config", resolved, "once", *once)
 	// TODO(M4): wire orchestrator.Run(resolved, *once)
-	fmt.Fprintln(os.Stderr, "minisymphony run: not yet implemented (see SPEC.md M4)")
+	fmt.Fprintln(os.Stderr, "symphony-go run: not yet implemented (see SPEC.md M4)")
 	return 1
 }
 
@@ -77,7 +77,7 @@ func doctorCommand(args []string) int {
 	}
 	slog.Info("doctor", "config", resolved)
 	// TODO(M1): wire config.Validate + doctor checks.
-	fmt.Fprintln(os.Stderr, "minisymphony doctor: not yet implemented (see SPEC.md M1)")
+	fmt.Fprintln(os.Stderr, "symphony-go doctor: not yet implemented (see SPEC.md M1)")
 	return 1
 }
 
@@ -85,15 +85,15 @@ func resolveConfigPath(explicit string) (string, error) {
 	if explicit != "" {
 		return explicit, nil
 	}
-	if v := os.Getenv("MINISYMPHONY_CONFIG"); v != "" {
+	if v := os.Getenv("SYMPHONY_GO_CONFIG"); v != "" {
 		return v, nil
 	}
 	if v := os.Getenv("XDG_CONFIG_HOME"); v != "" {
-		return v + "/minisymphony/config.yml", nil
+		return v + "/symphony-go/config.yml", nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("no --config and no fallback: %w", err)
 	}
-	return home + "/.minisymphony/config.yml", nil
+	return home + "/.symphony-go/config.yml", nil
 }

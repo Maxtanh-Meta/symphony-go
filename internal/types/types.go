@@ -1,5 +1,5 @@
 // Package types defines the cross-cutting data types shared across
-// minisymphony packages. Config-specific types live in internal/config.
+// symphony-go packages. Config-specific types live in internal/config.
 package types
 
 import "time"
@@ -86,7 +86,7 @@ type ReviewerDecision struct {
 }
 
 // Job is the on-disk job state. Persisted to
-// .minisymphony/state/jobs/{issue_number}.json.
+// .symphony-go/state/jobs/{issue_number}.json.
 type Job struct {
 	IssueNumber       int               `json:"issue_number"`
 	Repo              string            `json:"repo"`

@@ -193,7 +193,7 @@ func (f *InMemoryFake) PostIssueComment(_ context.Context, number int, body stri
 	}
 	c := types.IssueComment{
 		ID:        f.nextCommentID,
-		User:      "minisymphony",
+		User:      "symphony-go",
 		Body:      body,
 		CreatedAt: time.Now().UTC(),
 	}
