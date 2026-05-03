@@ -188,9 +188,12 @@ func (cr *ClaudeRunner) Run(ctx context.Context, req types.RunRequest) (types.Ru
 			sawErrorEvent = true
 		}
 	}
-	// Drain any scanner read error into stderr-side reasoning; do not fail.
+	// Capture any scanner read error to append after Wait. Writing to
+	// stderrBuf here would race with exec's internal stderr-copy goroutine
+	// (the race detector flagged this on CI under -race).
+	var scanErrSuffix string
 	if scanErr := scanner.Err(); scanErr != nil && !errors.Is(scanErr, io.EOF) {
-		fmt.Fprintf(&stderrBuf, "\n[claude runner] stdout scan error: %v\n", scanErr)
+		scanErrSuffix = fmt.Sprintf("\n[claude runner] stdout scan error: %v\n", scanErr)
 	}
 
 	waitErr := cmd.Wait()
@@ -212,7 +215,7 @@ func (cr *ClaudeRunner) Run(ctx context.Context, req types.RunRequest) (types.Ru
 		result.Text = fallbackText.String()
 	}
 	result.Events = append([]byte(nil), eventsBuf.Bytes()...)
-	result.Stderr = exec.Redact(stderrBuf.String(), cr.auditCfg.RedactPatterns)
+	result.Stderr = exec.Redact(stderrBuf.String()+scanErrSuffix, cr.auditCfg.RedactPatterns)
 	result.Success = exitOK && !sawErrorEvent
 
 	// Non-zero exit on its own is not a runner-level error: it's a failed
