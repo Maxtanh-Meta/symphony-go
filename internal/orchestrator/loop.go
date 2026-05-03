@@ -1,0 +1,189 @@
+package orchestrator
+
+import (
+	"context"
+	"strings"
+	"time"
+
+	"github.com/logosc/symphony-go/internal/types"
+)
+
+// Run starts the orchestrator's poll loop. The loop runs reconcile once
+// up front, then on each tick:
+//
+//  1. handle stop labels
+//  2. PollApprovals (gated mode)
+//  3. dispatch up to one ready issue
+//
+// When once is true, Run executes a single tick (after reconcile) and
+// returns. ctx cancellation cleanly exits the loop.
+func (o *Orchestrator) Run(ctx context.Context, once bool) error {
+	if err := o.Reconcile(ctx); err != nil {
+		return err
+	}
+	tick := func() {
+		if err := o.handleStopLabels(ctx); err != nil {
+			o.deps.Logger.Error("tick: handleStopLabels", "err", err)
+		}
+		if err := o.PollApprovals(ctx); err != nil {
+			o.deps.Logger.Error("tick: PollApprovals", "err", err)
+		}
+		issues, err := o.deps.GitHub.ListReadyIssues(ctx, o.deps.Config.Labels.Ready)
+		if err != nil {
+			o.deps.Logger.Error("tick: ListReadyIssues", "err", err)
+			return
+		}
+		for _, iss := range issues {
+			if _, ok := o.running[iss.Number]; ok {
+				continue
+			}
+			if err := o.ProcessIssue(ctx, iss); err != nil {
+				o.deps.Logger.Error("tick: ProcessIssue", "issue", iss.Number, "err", err)
+			}
+			break // MVP: one per tick
+		}
+	}
+	if once {
+		tick()
+		return nil
+	}
+	interval := time.Duration(o.deps.Config.GitHub.PollIntervalSeconds) * time.Second
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			tick()
+		}
+	}
+}
+
+// PollApprovals services awaiting-approval jobs. For each, list new
+// comments since Job.UpdatedAt, look for the configured approve command,
+// verify commenter permissions, and on match advance into implementation.
+func (o *Orchestrator) PollApprovals(ctx context.Context) error {
+	cfg := o.deps.Config
+	jobs, err := o.deps.State.List()
+	if err != nil {
+		return err
+	}
+	for _, job := range jobs {
+		if job.Status != types.StatusAwaitingApproval {
+			continue
+		}
+		if err := o.servicePendingApproval(ctx, job); err != nil {
+			o.deps.Logger.Error("approval: service", "issue", job.IssueNumber, "err", err)
+		}
+		_ = cfg // keep cfg in scope for future use
+	}
+	return nil
+}
+
+// servicePendingApproval polls comments for one awaiting-approval job and
+// resumes the implementation on a valid approve command.
+func (o *Orchestrator) servicePendingApproval(ctx context.Context, job *types.Job) error {
+	cfg := o.deps.Config
+	since := job.UpdatedAt
+	cmd := cfg.Approval.Command
+	comments, err := o.deps.GitHub.ListIssueComments(ctx, job.IssueNumber, since)
+	if err != nil {
+		return err
+	}
+	for _, c := range comments {
+		if strings.TrimSpace(c.Body) != cmd {
+			continue
+		}
+		perm, err := o.deps.GitHub.GetCollaboratorPermission(ctx, c.User)
+		if err != nil {
+			o.deps.Logger.Warn("approval: permission lookup", "user", c.User, "err", err)
+			continue
+		}
+		if !canApprove(perm) {
+			_ = o.deps.GitHub.AddReaction(ctx, c.ID, "-1")
+			o.deps.Logger.Info("approval: rejected (no permission)", "user", c.User, "perm", perm)
+			continue
+		}
+		// Approved.
+		job.ApprovalCommentID = c.ID
+		job.ApprovalPath = types.ApprovalPathHuman
+		o.deps.Logger.Info("approved", "issue", job.IssueNumber, "user", c.User)
+
+		issue, err := o.deps.GitHub.GetIssue(ctx, job.IssueNumber)
+		if err != nil {
+			return err
+		}
+		layout := o.layoutForJob(job)
+		env := o.envForJob(layout)
+		o.running[job.IssueNumber] = struct{}{}
+		err = o.runImplementation(ctx, job, issue, layout, env)
+		delete(o.running, job.IssueNumber)
+		return err
+	}
+	return nil
+}
+
+// canApprove reports whether perm is sufficient to issue an approve.
+func canApprove(perm string) bool {
+	switch strings.ToLower(perm) {
+	case "admin", "maintain", "write":
+		return true
+	}
+	return false
+}
+
+// handleStopLabels scans local jobs in active states; for any that carry
+// the stop label on github, transition them to blocked, post a comment,
+// and remove the stop label.
+func (o *Orchestrator) handleStopLabels(ctx context.Context) error {
+	cfg := o.deps.Config
+	jobs, err := o.deps.State.List()
+	if err != nil {
+		return err
+	}
+	for _, job := range jobs {
+		if isTerminal(job.Status) {
+			continue
+		}
+		iss, err := o.deps.GitHub.GetIssue(ctx, job.IssueNumber)
+		if err != nil {
+			o.deps.Logger.Warn("stop: get issue", "issue", job.IssueNumber, "err", err)
+			continue
+		}
+		if !hasLabel(iss.Labels, cfg.Labels.Stop) {
+			continue
+		}
+		// Replace [active+stop] with [blocked]; computeLabels removes both.
+		prev := labelForStatus(cfg, job.Status)
+		_ = o.deps.GitHub.ReplaceStateLabel(ctx, job.IssueNumber,
+			[]string{prev, cfg.Labels.Stop}, []string{cfg.Labels.Blocked})
+		_, _ = o.deps.GitHub.PostIssueComment(ctx, job.IssueNumber,
+			"[symphony-go] stop label observed; marking blocked")
+		job.Status = types.StatusBlocked
+		_ = o.saveJob(job)
+		o.deps.Logger.Info("stop", "issue", job.IssueNumber)
+	}
+	return nil
+}
+
+func isTerminal(s types.JobStatus) bool {
+	switch s {
+	case types.StatusPRReady, types.StatusFailed, types.StatusBlocked:
+		return true
+	}
+	return false
+}
+
+func hasLabel(labels []string, want string) bool {
+	w := strings.ToLower(want)
+	for _, l := range labels {
+		if strings.ToLower(l) == w {
+			return true
+		}
+	}
+	return false
+}

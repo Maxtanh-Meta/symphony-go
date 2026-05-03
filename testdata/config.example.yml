@@ -1,0 +1,101 @@
+# symphony-go config — copy to ~/.symphony-go/config.yml and edit.
+# This file lives outside the repo on purpose; the agent never sees it.
+
+repo:
+  full_name: "OWNER/REPO"
+  base_branch: "main"
+  local_path: "/abs/path/to/your/repo"
+  workflow_file: "WORKFLOW.md"
+
+github:
+  token_env: "GITHUB_TOKEN"
+  poll_interval_seconds: 30
+
+labels:
+  ready: "symphony:ready"
+  planning: "symphony:planning"
+  awaiting_approval: "symphony:awaiting-approval"
+  implementing: "symphony:implementing"
+  pr_ready: "symphony:pr-ready"
+  failed: "symphony:failed"
+  blocked: "symphony:blocked"
+  stop: "symphony:stop"
+
+approval:
+  mode: "auto"                        # gated | auto | handoff
+  command: "/symphony approve"
+  require_write_permission: true
+
+auto:
+  rules:
+    - issue_labels: ["docs", "test"]
+      max_plan_files_claimed: 5
+      reviewer_required: false
+    - issue_labels: ["safe-change"]
+      max_plan_files_claimed: 10
+      reviewer_required: true
+    - issue_labels: []                # catch-all
+      max_plan_files_claimed: 20
+      reviewer_required: true
+  reviewer:
+    provider: "codex"                 # ideally != agent.provider
+    model: ""
+    timeout_seconds: 600
+  fallback_on_reject: "gated"
+  fallback_on_no_rule_match: "gated"
+  verify_diff_matches_plan: true
+  max_diff_drift_files: 2
+
+agent:
+  provider: "claude"                  # claude | codex
+  model: "sonnet"
+  timeout_seconds: 3600
+
+claude:
+  max_turns: 20
+  planning_tools: ["Read", "Grep", "Glob", "LS"]
+  implementation_tools:
+    - "Read"
+    - "Edit"
+    - "Write"
+    - "Bash(git status:*)"
+    - "Bash(git diff:*)"
+    - "Bash(go test:*)"
+  review_tools: ["Read", "Grep", "Glob", "LS"]
+  disallowed_tools:
+    - "Bash(sudo:*)"
+    - "Bash(curl:*)"
+    - "Bash(wget:*)"
+
+codex:
+  mode: "exec"                        # exec | app-server (post-MVP)
+  planning_args:       ["--sandbox", "read-only"]
+  implementation_args: ["--sandbox", "workspace-write"]
+  review_args:         ["--sandbox", "read-only"]
+
+env:
+  allowlist: ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]
+  block_patterns:
+    - ".*TOKEN.*"
+    - ".*SECRET.*"
+    - ".*PASSWORD.*"
+    - "AWS_.*"
+    - "GCLOUD_.*"
+    - "KUBECONFIG"
+    - "SSH_AUTH_SOCK"
+
+hooks:
+  after_create: ""                    # e.g. "go mod download" or "npm ci"
+  before_run:   ""
+  after_run:    ""
+  timeout_seconds: 60
+
+validation:
+  commands: ["go test ./..."]
+  command_timeout_seconds: 900
+
+audit:
+  redact_patterns:
+    - "sk-[A-Za-z0-9_-]+"
+    - "ghp_[A-Za-z0-9_]+"
+    - "ghs_[A-Za-z0-9_]+"
