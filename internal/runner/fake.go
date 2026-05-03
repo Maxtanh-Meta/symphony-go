@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chenlong-seu/symphony-go/internal/types"
+	"github.com/logosc/symphony-go/internal/types"
 )
 
 // FakeRunner is a test double for AgentRunner. Configure either canned

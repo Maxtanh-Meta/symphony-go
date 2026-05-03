@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chenlong-seu/symphony-go/internal/config"
-	"github.com/chenlong-seu/symphony-go/internal/types"
+	"github.com/logosc/symphony-go/internal/config"
+	"github.com/logosc/symphony-go/internal/types"
 )
 
 func newTestClaudeCfg() config.ClaudeConfig {

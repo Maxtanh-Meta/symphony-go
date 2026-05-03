@@ -14,7 +14,7 @@ import (
 	gh "github.com/google/go-github/v68/github"
 	"golang.org/x/oauth2"
 
-	"github.com/chenlong-seu/symphony-go/internal/types"
+	"github.com/logosc/symphony-go/internal/types"
 )
 
 // CreatePRRequest is the input to CreateDraftPR.

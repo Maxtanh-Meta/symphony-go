@@ -3,8 +3,8 @@ package approval
 import (
 	"strings"
 
-	"github.com/chenlong-seu/symphony-go/internal/config"
-	"github.com/chenlong-seu/symphony-go/internal/types"
+	"github.com/logosc/symphony-go/internal/config"
+	"github.com/logosc/symphony-go/internal/types"
 )
 
 // RuleMatch is the result of evaluating an auto.rules list against an

@@ -14,9 +14,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/chenlong-seu/symphony-go/internal/config"
-	"github.com/chenlong-seu/symphony-go/internal/exec"
-	"github.com/chenlong-seu/symphony-go/internal/types"
+	"github.com/logosc/symphony-go/internal/config"
+	"github.com/logosc/symphony-go/internal/exec"
+	"github.com/logosc/symphony-go/internal/types"
 )
 
 // defaultClaudeCommand is the default executable name for the Claude Code

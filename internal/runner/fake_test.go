@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/chenlong-seu/symphony-go/internal/types"
+	"github.com/logosc/symphony-go/internal/types"
 )
 
 func TestFakeRunner_CannedResponse(t *testing.T) {

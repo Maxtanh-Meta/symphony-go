@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chenlong-seu/symphony-go/internal/types"
+	"github.com/logosc/symphony-go/internal/types"
 )
 
 // fakeIssue is the InMemoryFake's view of an issue. It carries an

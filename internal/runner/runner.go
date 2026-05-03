@@ -6,7 +6,7 @@ package runner
 import (
 	"context"
 
-	"github.com/chenlong-seu/symphony-go/internal/types"
+	"github.com/logosc/symphony-go/internal/types"
 )
 
 // AgentRunner runs an agent subprocess for one phase of work and returns

@@ -3,8 +3,8 @@ package approval
 import (
 	"testing"
 
-	"github.com/chenlong-seu/symphony-go/internal/config"
-	"github.com/chenlong-seu/symphony-go/internal/types"
+	"github.com/logosc/symphony-go/internal/config"
+	"github.com/logosc/symphony-go/internal/types"
 )
 
 func TestEvaluate_CatchAllRuleMatches(t *testing.T) {

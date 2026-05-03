@@ -34,12 +34,8 @@ GITHUB_TOKEN=ghp_... minisymphony run --config ~/.minisymphony/config.yml
 
 ## Module path
 
-The Go module path is currently `github.com/chenlong-seu/symphony-go` as a
-placeholder. Adjust if you publish elsewhere:
-
-```sh
-go mod edit -module github.com/<you>/symphony-go
-```
+The Go module path is `github.com/logosc/symphony-go`. To fork under a
+different organization, run `go mod edit -module ...` and update imports.
 
 ## License
 

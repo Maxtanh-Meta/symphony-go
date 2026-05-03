@@ -21,7 +21,7 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/chenlong-seu/symphony-go/internal/types"
+	"github.com/logosc/symphony-go/internal/types"
 )
 
 // Store is a thread-safe (within a process) handle to the on-disk job

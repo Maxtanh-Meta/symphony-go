@@ -16,9 +16,9 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/chenlong-seu/symphony-go/internal/config"
-	"github.com/chenlong-seu/symphony-go/internal/runner"
-	"github.com/chenlong-seu/symphony-go/internal/types"
+	"github.com/logosc/symphony-go/internal/config"
+	"github.com/logosc/symphony-go/internal/runner"
+	"github.com/logosc/symphony-go/internal/types"
 )
 
 // reviewerPromptTmpl is the fixed reviewer prompt. It is intentionally a

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/chenlong-seu/symphony-go/internal/types"
+	"github.com/logosc/symphony-go/internal/types"
 )
 
 func TestVerifyDiff_SubsetNoDrift(t *testing.T) {

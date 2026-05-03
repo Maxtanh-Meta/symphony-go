@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chenlong-seu/symphony-go/internal/types"
+	"github.com/logosc/symphony-go/internal/types"
 )
 
 func newTestStore(t *testing.T) (*Store, string) {

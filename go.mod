@@ -1,4 +1,4 @@
-module github.com/chenlong-seu/symphony-go
+module github.com/logosc/symphony-go
 
 go 1.26.1
 

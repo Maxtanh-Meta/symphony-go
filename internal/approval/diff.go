@@ -3,7 +3,7 @@ package approval
 import (
 	"strings"
 
-	"github.com/chenlong-seu/symphony-go/internal/types"
+	"github.com/logosc/symphony-go/internal/types"
 )
 
 // DriftResult reports the difference between the files actually touched

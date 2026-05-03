@@ -37,9 +37,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/chenlong-seu/symphony-go/internal/config"
-	xexec "github.com/chenlong-seu/symphony-go/internal/exec"
-	"github.com/chenlong-seu/symphony-go/internal/types"
+	"github.com/logosc/symphony-go/internal/config"
+	xexec "github.com/logosc/symphony-go/internal/exec"
+	"github.com/logosc/symphony-go/internal/types"
 )
 
 // CodexRunner runs the OpenAI Codex CLI as a one-shot subprocess

@@ -12,7 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/chenlong-seu/symphony-go/internal/types"
+	"github.com/logosc/symphony-go/internal/types"
 )
 
 // ParseScope extracts the `## Scope` block from a plan body. Returns

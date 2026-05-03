@@ -11,7 +11,7 @@ import (
 
 	gh "github.com/google/go-github/v68/github"
 
-	"github.com/chenlong-seu/symphony-go/internal/types"
+	"github.com/logosc/symphony-go/internal/types"
 )
 
 func TestParseFullName(t *testing.T) {
