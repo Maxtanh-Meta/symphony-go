@@ -138,6 +138,10 @@ func (cr *CodexRunner) Run(ctx context.Context, req types.RunRequest) (types.Run
 		defer cancel()
 	}
 
+	stallTimeout := time.Duration(cr.agentCfg.StallTimeoutSeconds) * time.Second
+	runCtx, watchdog := newStallWatchdog(runCtx, stallTimeout)
+	defer watchdog.Stop()
+
 	cmd := exec.CommandContext(runCtx, cr.command, argv...)
 	cmd.Dir = req.RepoPath
 	cmd.Env = xexec.BuildAgentEnv(cr.envCfg.Allowlist, cr.envCfg.BlockPatterns, os.Environ(), req.HomePath)
@@ -178,6 +182,7 @@ func (cr *CodexRunner) Run(ctx context.Context, req types.RunRequest) (types.Run
 	scanner := bufio.NewScanner(stdoutPipe)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
+		watchdog.touch()
 		line := scanner.Bytes()
 		eventsBuf.Write(line)
 		eventsBuf.WriteByte('\n')
@@ -251,6 +256,11 @@ func (cr *CodexRunner) Run(ctx context.Context, req types.RunRequest) (types.Run
 		CompletedAt: completed,
 	}
 
+	// If the watchdog fired, surface as a stall error and force Success=false.
+	if watchdog.Fired() {
+		res.Success = false
+		return res, fmt.Errorf("codex runner: stalled (no events for %ds)", cr.agentCfg.StallTimeoutSeconds)
+	}
 	// If the context was canceled or timed out, surface as a Go-level error.
 	if runCtx.Err() != nil {
 		return res, runCtx.Err()

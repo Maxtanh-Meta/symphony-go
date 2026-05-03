@@ -274,6 +274,113 @@ func TestSandboxForPhase_Defaults(t *testing.T) {
 	}
 }
 
+// TestCodexAppServerStallTimeout exercises the event-inactivity watchdog
+// for the JSON-RPC backend. After turn/start the fake emits no further
+// frames for 5 seconds; with stall_timeout=1 the watchdog must cancel the
+// run promptly. (We don't pre-write a turn.completed at all — the fake
+// just sleeps.)
+func TestCodexAppServerStallTimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash-based test")
+	}
+	dir := t.TempDir()
+	frames := []string{
+		rpcResponse(1, `{"protocolVersion":"1"}`),
+		"",
+		rpcResponse(2, `{"thread":{"id":"th_abc"}}`),
+		rpcResponse(3, `{"turn":{"id":"tr_1"}}`),
+		"@@SLEEP=5",
+	}
+	path := writeFakeAppServer(t, dir, frames)
+
+	cr := newAppServerRunnerForTest().WithCommand(path)
+	cr.agentCfg.StallTimeoutSeconds = 1
+	home := filepath.Join(dir, "home")
+	repo := filepath.Join(dir, "repo")
+	_ = os.MkdirAll(home, 0o755)
+	_ = os.MkdirAll(repo, 0o755)
+
+	start := time.Now()
+	res, err := cr.Run(context.Background(), types.RunRequest{
+		Phase:    types.PhasePlanning,
+		Prompt:   "x",
+		RepoPath: repo,
+		HomePath: home,
+	})
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatalf("expected stall error, got nil")
+	}
+	if !strings.Contains(err.Error(), "stalled") {
+		t.Fatalf("expected stall error, got: %v", err)
+	}
+	if res.Success {
+		t.Errorf("expected Success=false on stall")
+	}
+	if elapsed > 15*time.Second {
+		t.Errorf("stall watchdog too slow: %v", elapsed)
+	}
+}
+
+// TestCodexAppServerStallTimeoutDisabled confirms a similar slow but
+// eventually-completing fake succeeds when StallTimeoutSeconds=0.
+func TestCodexAppServerStallTimeoutDisabled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash-based test")
+	}
+	dir := t.TempDir()
+	frames := []string{
+		rpcResponse(1, `{"protocolVersion":"1"}`),
+		"",
+		rpcResponse(2, `{"thread":{"id":"th_abc"}}`),
+		rpcResponse(3, `{"turn":{"id":"tr_1"}}`),
+		"@@SLEEP=5",
+		// After the sleep, send the terminal frame. We need an extra fake
+		// stdin line to drive the next emission, so re-use one consumed
+		// from the prompt; cat>/dev/null drains anyway.
+	}
+	// Append a final synthetic line that will be sent after the sleep with
+	// no preceding read. We append a second sleep-less frame by abusing
+	// the script: write a custom fake instead.
+	path := filepath.Join(dir, "codex")
+	script := "#!/usr/bin/env bash\nset -u\n" +
+		"IFS= read -r _line\n" +
+		"printf '%s\\n' " + shellQuote(frames[0]) + "\n" +
+		"IFS= read -r _line\n" +
+		"IFS= read -r _line\n" +
+		"printf '%s\\n' " + shellQuote(frames[2]) + "\n" +
+		"IFS= read -r _line\n" +
+		"printf '%s\\n' " + shellQuote(frames[3]) + "\n" +
+		"sleep 5\n" +
+		"printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"method\":\"item.completed\",\"params\":{\"item_type\":\"agent_message\",\"text\":\"late\"}}'\n" +
+		"printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"method\":\"turn.completed\",\"params\":{\"status\":\"completed\"}}'\n" +
+		"cat >/dev/null\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake: %v", err)
+	}
+
+	cr := newAppServerRunnerForTest().WithCommand(path)
+	cr.agentCfg.StallTimeoutSeconds = 0
+	home := filepath.Join(dir, "home")
+	repo := filepath.Join(dir, "repo")
+	_ = os.MkdirAll(home, 0o755)
+	_ = os.MkdirAll(repo, 0o755)
+
+	res, err := cr.Run(context.Background(), types.RunRequest{
+		Phase:    types.PhasePlanning,
+		Prompt:   "x",
+		RepoPath: repo,
+		HomePath: home,
+		Timeout:  30 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Success {
+		t.Errorf("expected Success=true with watchdog disabled; stderr=%q events=%q", res.Stderr, string(res.Events))
+	}
+}
+
 func TestCodexRunner_OpenSession_RejectsExecMode(t *testing.T) {
 	cr := NewCodexRunner(
 		config.AgentConfig{},

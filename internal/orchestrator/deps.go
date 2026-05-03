@@ -60,6 +60,13 @@ type Deps struct {
 	// WorkspaceRoot overrides where per-issue worktrees live. Defaults to
 	// "<repo.local_path>/.symphony-go/wt".
 	WorkspaceRoot string
+	// SelfUsername is the GitHub login this orchestrator instance posts
+	// comments as (e.g. the App's bot login). When non-empty, comments
+	// authored by this user are ignored by approval polling, even if not
+	// listed in cfg.Approval.IgnoredUsers. Helps protect against
+	// prompt-injected `/symphony approve` comments echoed by the bot
+	// itself when running as a GitHub App.
+	SelfUsername string
 }
 
 // Orchestrator is the M4 entry point. Construct via New.

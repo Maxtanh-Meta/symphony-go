@@ -268,3 +268,83 @@ echo '{"type":"result","result":"never"}'
 		t.Fatalf("timeout took too long: %v", elapsed)
 	}
 }
+
+// TestClaudeStallTimeout exercises the event-inactivity watchdog. The fake
+// emits one event, then sleeps for 5x the configured stall window before
+// emitting more lines; the watchdog should cancel the subprocess via SIGTERM
+// well before the trailing events arrive.
+func TestClaudeStallTimeout(t *testing.T) {
+	dir := t.TempDir()
+	// SIGTERM trap + background sleep + wait so bash terminates promptly
+	// when the watchdog cancels the run; without this bash is blocked in
+	// the foreground sleep and the orphaned sleep child holds the stdout
+	// pipe open until it completes naturally.
+	body := `trap 'kill $SLEEP_PID 2>/dev/null; exit 143' TERM
+cat >/dev/null
+echo '{"type":"system","subtype":"init"}'
+sleep 5 >&- 2>&- &
+SLEEP_PID=$!
+wait $SLEEP_PID
+echo '{"type":"result","result":"too late"}'
+`
+	fake := writeFakeClaude(t, dir, body)
+
+	agentCfg := newTestAgentCfg()
+	agentCfg.StallTimeoutSeconds = 1
+
+	cr := NewClaudeRunner(agentCfg, newTestClaudeCfg(), config.EnvConfig{}, config.AuditConfig{}, WithCommand(fake))
+
+	start := time.Now()
+	res, err := cr.Run(context.Background(), types.RunRequest{
+		RepoPath: t.TempDir(),
+		HomePath: t.TempDir(),
+		Phase:    types.PhasePlanning,
+	})
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatalf("expected stall error, got nil")
+	}
+	if !strings.Contains(err.Error(), "stalled") {
+		t.Fatalf("expected stall error, got: %v", err)
+	}
+	if res.Success {
+		t.Fatalf("expected Success=false on stall")
+	}
+	if elapsed > 4*time.Second {
+		t.Fatalf("stall watchdog too slow: %v", elapsed)
+	}
+}
+
+// TestClaudeStallTimeoutDisabled confirms the same fake completes normally
+// when StallTimeoutSeconds=0 (the watchdog must be inert in that case).
+func TestClaudeStallTimeoutDisabled(t *testing.T) {
+	dir := t.TempDir()
+	body := `cat >/dev/null
+echo '{"type":"system","subtype":"init"}'
+sleep 5
+echo '{"type":"result","result":"finished"}'
+`
+	fake := writeFakeClaude(t, dir, body)
+
+	agentCfg := newTestAgentCfg()
+	agentCfg.StallTimeoutSeconds = 0
+
+	cr := NewClaudeRunner(agentCfg, newTestClaudeCfg(), config.EnvConfig{}, config.AuditConfig{}, WithCommand(fake))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	res, err := cr.Run(ctx, types.RunRequest{
+		RepoPath: t.TempDir(),
+		HomePath: t.TempDir(),
+		Phase:    types.PhasePlanning,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected Success=true with watchdog disabled, stderr=%q", res.Stderr)
+	}
+	if res.Text != "finished" {
+		t.Fatalf("expected final result text, got %q", res.Text)
+	}
+}

@@ -305,3 +305,85 @@ printf '%s\n' '{"type":"turn.completed"}'`
 		t.Errorf("Text = %q, want %q", res.Text, "after-bad-line")
 	}
 }
+
+// TestCodexStallTimeout exercises the event-inactivity watchdog in exec
+// mode: the fake emits one event, sleeps for 5x the configured stall
+// window, then emits a turn.completed event. The watchdog must cancel
+// the subprocess before the trailing event arrives.
+func TestCodexStallTimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash-script-based test")
+	}
+	dir := t.TempDir()
+	// SIGTERM trap + background sleep + wait so bash exits promptly when
+	// the watchdog signals the subprocess (see TestClaudeStallTimeout).
+	body := `trap 'kill $SLEEP_PID 2>/dev/null; exit 143' TERM
+printf '%s\n' '{"type":"thread.started"}'
+sleep 5 >&- 2>&- &
+SLEEP_PID=$!
+wait $SLEEP_PID
+printf '%s\n' '{"type":"turn.completed"}'`
+	path := writeFakeCodex(t, dir, body, 0)
+
+	cr := newCodexRunnerForTest().WithCommand(path)
+	cr.agentCfg.StallTimeoutSeconds = 1
+
+	home := filepath.Join(dir, "home")
+	repo := filepath.Join(dir, "repo")
+	_ = os.MkdirAll(home, 0o755)
+	_ = os.MkdirAll(repo, 0o755)
+
+	start := time.Now()
+	res, err := cr.Run(context.Background(), types.RunRequest{
+		Phase:    types.PhasePlanning,
+		RepoPath: repo,
+		HomePath: home,
+	})
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatalf("expected stall error, got nil")
+	}
+	if !strings.Contains(err.Error(), "stalled") {
+		t.Fatalf("expected stall error, got: %v", err)
+	}
+	if res.Success {
+		t.Errorf("expected Success=false on stall")
+	}
+	if elapsed > 4*time.Second {
+		t.Errorf("stall watchdog too slow: %v", elapsed)
+	}
+}
+
+// TestCodexStallTimeoutDisabled confirms the same fake completes normally
+// when StallTimeoutSeconds=0.
+func TestCodexStallTimeoutDisabled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash-script-based test")
+	}
+	dir := t.TempDir()
+	body := `printf '%s\n' '{"type":"thread.started"}'
+sleep 5
+printf '%s\n' '{"type":"turn.completed"}'`
+	path := writeFakeCodex(t, dir, body, 0)
+
+	cr := newCodexRunnerForTest().WithCommand(path)
+	cr.agentCfg.StallTimeoutSeconds = 0
+
+	home := filepath.Join(dir, "home")
+	repo := filepath.Join(dir, "repo")
+	_ = os.MkdirAll(home, 0o755)
+	_ = os.MkdirAll(repo, 0o755)
+
+	res, err := cr.Run(context.Background(), types.RunRequest{
+		Phase:    types.PhasePlanning,
+		RepoPath: repo,
+		HomePath: home,
+		Timeout:  30 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Success {
+		t.Errorf("expected Success=true with watchdog disabled, stderr=%q", res.Stderr)
+	}
+}

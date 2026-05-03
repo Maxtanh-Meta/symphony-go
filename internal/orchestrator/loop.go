@@ -98,6 +98,10 @@ func (o *Orchestrator) servicePendingApproval(ctx context.Context, job *types.Jo
 		if strings.TrimSpace(c.Body) != cmd {
 			continue
 		}
+		if o.isIgnoredApprovalUser(c.User) {
+			o.deps.Logger.Info("approval: ignored user", "user", c.User)
+			continue
+		}
 		perm, err := o.deps.GitHub.GetCollaboratorPermission(ctx, c.User)
 		if err != nil {
 			o.deps.Logger.Warn("approval: permission lookup", "user", c.User, "err", err)
@@ -125,6 +129,26 @@ func (o *Orchestrator) servicePendingApproval(ctx context.Context, job *types.Jo
 		return err
 	}
 	return nil
+}
+
+// isIgnoredApprovalUser reports whether a comment authored by `user`
+// must be skipped before any permission check during approval polling.
+// Matches case-insensitively against cfg.Approval.IgnoredUsers and (if
+// set) Deps.SelfUsername. An empty user is also treated as ignored.
+func (o *Orchestrator) isIgnoredApprovalUser(user string) bool {
+	u := strings.ToLower(strings.TrimSpace(user))
+	if u == "" {
+		return true
+	}
+	if self := strings.ToLower(strings.TrimSpace(o.deps.SelfUsername)); self != "" && self == u {
+		return true
+	}
+	for _, ig := range o.deps.Config.Approval.IgnoredUsers {
+		if strings.ToLower(strings.TrimSpace(ig)) == u {
+			return true
+		}
+	}
+	return false
 }
 
 // canApprove reports whether perm is sufficient to issue an approve.

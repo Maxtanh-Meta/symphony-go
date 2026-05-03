@@ -63,6 +63,12 @@ type ApprovalConfig struct {
 	Mode                   string `yaml:"mode"`
 	Command                string `yaml:"command"`
 	RequireWritePermission bool   `yaml:"require_write_permission"`
+	// IgnoredUsers is a list of GitHub logins whose comments must never be
+	// treated as approvals. Matching is case-insensitive. Defaults to the
+	// well-known orchestrator bot logins (`symphony-go[bot]`,
+	// `github-actions[bot]`) so a prompt-injected issue body cannot make
+	// the orchestrator's own bot self-approve when running as a GitHub App.
+	IgnoredUsers []string `yaml:"ignored_users"`
 }
 
 // AutoConfig configures auto-approval: rules engine, reviewer agent,
@@ -107,6 +113,12 @@ type AgentConfig struct {
 	// Also used by the Claude runner via claude.max_turns; this field is
 	// the cross-provider knob.
 	MaxTurns int `yaml:"max_turns"`
+	// StallTimeoutSeconds is the per-run event-inactivity watchdog. When >0,
+	// each agent runner cancels the subprocess (via the existing SIGTERM
+	// path) if no event/line is observed for this many seconds, marking the
+	// run as Success=false. The default (0) disables stall detection. See
+	// SPEC §17.
+	StallTimeoutSeconds int `yaml:"stall_timeout_seconds"`
 }
 
 // ClaudeConfig is the provider-specific configuration for the Claude
@@ -225,6 +237,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Approval.Command == "" {
 		cfg.Approval.Command = "/symphony approve"
+	}
+	if cfg.Approval.IgnoredUsers == nil {
+		cfg.Approval.IgnoredUsers = []string{"symphony-go[bot]", "github-actions[bot]"}
 	}
 	if cfg.Auto.FallbackOnReject == "" {
 		cfg.Auto.FallbackOnReject = "gated"

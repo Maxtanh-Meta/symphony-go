@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/logosc/symphony-go/internal/approval"
+	"github.com/logosc/symphony-go/internal/audit"
 	"github.com/logosc/symphony-go/internal/config"
 	"github.com/logosc/symphony-go/internal/github"
 	"github.com/logosc/symphony-go/internal/orchestrator"
@@ -37,6 +38,10 @@ func main() {
 		os.Exit(runCommand(args))
 	case "doctor":
 		os.Exit(doctorCommand(args))
+	case "status":
+		os.Exit(statusCommand(args))
+	case "clean":
+		os.Exit(cleanCommand(args))
 	case "-h", "--help", "help":
 		usage(os.Stdout)
 		os.Exit(0)
@@ -53,6 +58,8 @@ func usage(w *os.File) {
 usage:
   symphony-go run    [--once] --config <path>
   symphony-go doctor          --config <path>
+  symphony-go status          --config <path>
+  symphony-go clean           [--config <path>] [--dry-run] [--force]
 
 If --config is omitted, the following are searched in order:
   $SYMPHONY_GO_CONFIG
@@ -85,6 +92,16 @@ func runCommand(args []string) int {
 		slog.Error("config integrity guard", "err", err)
 		return 2
 	}
+
+	// Install the per-issue audit log writer (SPEC §13). The audit handler
+	// fans out to the existing stderr JSON handler and additionally appends
+	// a redacted JSON line to <repo>/.symphony-go/audit/{issue}.jsonl
+	// whenever a record carries an "issue" or "issue_number" int attr.
+	auditDir := filepath.Join(cfg.Repo.LocalPath, ".symphony-go", "audit")
+	stderrDelegate := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})
+	auditHandler := audit.New(auditDir, cfg.Audit.RedactPatterns, stderrDelegate)
+	defer func() { _ = auditHandler.Close() }()
+	slog.SetDefault(slog.New(auditHandler))
 
 	token := os.Getenv(cfg.GitHub.TokenEnv)
 	if token == "" {

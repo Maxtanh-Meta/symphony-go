@@ -83,13 +83,31 @@ func (cr *CodexRunner) runAppServer(ctx context.Context, req types.RunRequest) (
 		defer cancel()
 	}
 
-	sess, err := cr.openSession(runCtx, req)
+	stallTimeout := time.Duration(cr.agentCfg.StallTimeoutSeconds) * time.Second
+	runCtx, watchdog := newStallWatchdog(runCtx, stallTimeout)
+	defer watchdog.Stop()
+
+	sess, err := cr.openSessionWithWatchdog(runCtx, req, watchdog)
 	if err != nil {
+		if watchdog.Fired() {
+			return types.RunResult{StartedAt: started, CompletedAt: time.Now()},
+				fmt.Errorf("codex app-server: stalled (no events for %ds)", cr.agentCfg.StallTimeoutSeconds)
+		}
 		return types.RunResult{StartedAt: started, CompletedAt: time.Now()}, err
 	}
 	defer func() { _ = sess.Close() }()
 
 	res, err := sess.Turn(runCtx, req.Prompt)
+	if watchdog.Fired() {
+		res.Success = false
+		if res.CompletedAt.IsZero() {
+			res.CompletedAt = time.Now()
+		}
+		if res.StartedAt.IsZero() {
+			res.StartedAt = started
+		}
+		return res, fmt.Errorf("codex app-server: stalled (no events for %ds)", cr.agentCfg.StallTimeoutSeconds)
+	}
 	if res.StartedAt.IsZero() {
 		res.StartedAt = started
 	}
@@ -167,11 +185,23 @@ type codexSession struct {
 	stderrBuf bytes.Buffer
 
 	startedAt time.Time
+
+	// watchdog observes inactivity at the JSON-RPC frame level. It is
+	// installed by runAppServer/openSession when agent.stall_timeout_seconds
+	// > 0 and is nil otherwise; the helper methods on stallWatchdog tolerate
+	// a nil receiver.
+	watchdog *stallWatchdog
 }
 
 // openSession spawns `codex app-server`, drives initialize → initialized →
 // thread/start, and returns a codexSession ready for Turn calls.
 func (cr *CodexRunner) openSession(ctx context.Context, req types.RunRequest) (*codexSession, error) {
+	return cr.openSessionWithWatchdog(ctx, req, nil)
+}
+
+// openSessionWithWatchdog is openSession but attaches an event-inactivity
+// watchdog so the readLoop can touch it on every JSON-RPC frame.
+func (cr *CodexRunner) openSessionWithWatchdog(ctx context.Context, req types.RunRequest, watchdog *stallWatchdog) (*codexSession, error) {
 	sandbox := sandboxForPhase(cr.codexCfg, req.Phase)
 
 	cmd := osexec.CommandContext(ctx, cr.command, "app-server")
@@ -217,6 +247,7 @@ func (cr *CodexRunner) openSession(ctx context.Context, req types.RunRequest) (*
 		pending:   make(map[int64]chan *jsonrpcMessage),
 		notifyCh:  make(chan *jsonrpcMessage, 256),
 		startedAt: time.Now(),
+		watchdog:  watchdog,
 	}
 
 	// Stderr copier — mutex-guarded buffer.
@@ -293,6 +324,7 @@ func (s *codexSession) readLoop() {
 		if len(line) == 0 {
 			continue
 		}
+		s.watchdog.touch()
 		var msg jsonrpcMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
 			slog.Warn("codex app-server: malformed JSON-RPC line ignored", "err", err.Error())

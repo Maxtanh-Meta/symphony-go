@@ -11,6 +11,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -18,6 +19,106 @@ import (
 	"github.com/logosc/symphony-go/internal/exec"
 	"github.com/logosc/symphony-go/internal/types"
 )
+
+// stallWatchdog monitors event-inactivity on a streaming runner. When
+// timeout > 0, callers must invoke touch() each time a stdout line or
+// JSON-RPC frame is observed; the watchdog goroutine cancels the run
+// context via cancel when time.Since(lastEventAt) exceeds timeout. Stop
+// must be called before the parent context can be cancelled normally to
+// release resources.
+//
+// The watchdog is safe to use across goroutines: touch() is mutex-guarded
+// against the watchdog's read of lastEventAt.
+type stallWatchdog struct {
+	timeout time.Duration
+	cancel  context.CancelFunc
+	stop    context.CancelFunc
+
+	mu          sync.Mutex
+	lastEventAt time.Time
+	fired       bool
+}
+
+// newStallWatchdog spawns a watchdog goroutine. When timeout <= 0 it
+// returns a no-op watchdog (touch and Stop are cheap; cancel is never
+// called). The returned context is the child context callers must use
+// when constructing the subprocess; it is cancelled both when Stop is
+// called (normal termination) and when a stall is detected.
+func newStallWatchdog(parent context.Context, timeout time.Duration) (context.Context, *stallWatchdog) {
+	runCtx, cancel := context.WithCancel(parent)
+	w := &stallWatchdog{
+		timeout:     timeout,
+		cancel:      cancel,
+		lastEventAt: time.Now(),
+	}
+	if timeout <= 0 {
+		// No-op watchdog — Stop just releases the cancel func.
+		w.stop = cancel
+		return runCtx, w
+	}
+	wdCtx, stop := context.WithCancel(parent)
+	w.stop = stop
+	tickEvery := timeout / 4
+	if tickEvery < time.Second {
+		tickEvery = time.Second
+	}
+	go func() {
+		ticker := time.NewTicker(tickEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-wdCtx.Done():
+				return
+			case <-ticker.C:
+				w.mu.Lock()
+				idle := time.Since(w.lastEventAt)
+				w.mu.Unlock()
+				if idle > timeout {
+					w.mu.Lock()
+					w.fired = true
+					w.mu.Unlock()
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return runCtx, w
+}
+
+// touch records that an event/line was just observed.
+func (w *stallWatchdog) touch() {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	w.lastEventAt = time.Now()
+	w.mu.Unlock()
+}
+
+// Stop tears down the watchdog goroutine and releases the run context.
+// It is safe to call multiple times.
+func (w *stallWatchdog) Stop() {
+	if w == nil {
+		return
+	}
+	if w.stop != nil {
+		w.stop()
+	}
+	if w.cancel != nil {
+		w.cancel()
+	}
+}
+
+// Fired reports whether the watchdog cancelled the run due to inactivity.
+func (w *stallWatchdog) Fired() bool {
+	if w == nil {
+		return false
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.fired
+}
 
 // defaultClaudeCommand is the default executable name for the Claude Code
 // CLI. Resolved via PATH at run time.
@@ -124,6 +225,10 @@ func (cr *ClaudeRunner) Run(ctx context.Context, req types.RunRequest) (types.Ru
 		defer cancel()
 	}
 
+	stallTimeout := time.Duration(cr.agentCfg.StallTimeoutSeconds) * time.Second
+	runCtx, watchdog := newStallWatchdog(runCtx, stallTimeout)
+	defer watchdog.Stop()
+
 	args := cr.buildArgs(req.Phase)
 
 	startedAt := time.Now()
@@ -167,6 +272,7 @@ func (cr *ClaudeRunner) Run(ctx context.Context, req types.RunRequest) (types.Ru
 	// Allow long stream-json lines (e.g., large tool outputs).
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
+		watchdog.touch()
 		line := scanner.Bytes()
 		eventsBuf.Write(line)
 		eventsBuf.WriteByte('\n')
@@ -221,6 +327,10 @@ func (cr *ClaudeRunner) Run(ctx context.Context, req types.RunRequest) (types.Ru
 	// Non-zero exit on its own is not a runner-level error: it's a failed
 	// agent run. Surface only context-derived termination explicitly so
 	// callers can distinguish timeouts.
+	if watchdog.Fired() {
+		result.Success = false
+		return result, fmt.Errorf("claude runner: stalled (no events for %ds)", cr.agentCfg.StallTimeoutSeconds)
+	}
 	if runCtx.Err() != nil && errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 		result.Success = false
 		return result, nil
