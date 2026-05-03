@@ -118,9 +118,12 @@ type codexEvent struct {
 func (cr *CodexRunner) Run(ctx context.Context, req types.RunRequest) (types.RunResult, error) {
 	started := time.Now()
 
+	if cr.codexCfg.Mode == "app-server" {
+		return cr.runAppServer(ctx, req)
+	}
 	if cr.codexCfg.Mode != "exec" {
 		return types.RunResult{StartedAt: started, CompletedAt: time.Now()},
-			fmt.Errorf("codex app-server mode not yet implemented (SPEC §15 M7); set codex.mode: exec")
+			fmt.Errorf("codex runner: unsupported mode %q (want exec|app-server)", cr.codexCfg.Mode)
 	}
 
 	argv, err := cr.buildArgv(req.Phase)

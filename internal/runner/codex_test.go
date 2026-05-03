@@ -58,18 +58,18 @@ func TestCodexBuildArgvSnapshot(t *testing.T) {
 	}
 }
 
-func TestCodexAppServerModeRejected(t *testing.T) {
+func TestCodexUnknownModeRejected(t *testing.T) {
 	cr := NewCodexRunner(
 		config.AgentConfig{},
-		config.CodexConfig{Mode: "app-server"},
+		config.CodexConfig{Mode: "bogus"},
 		config.EnvConfig{},
 		config.AuditConfig{},
 	)
 	_, err := cr.Run(context.Background(), types.RunRequest{Phase: types.PhasePlanning})
 	if err == nil {
-		t.Fatal("expected error for app-server mode")
+		t.Fatal("expected error for unknown mode")
 	}
-	if !strings.Contains(err.Error(), "app-server") || !strings.Contains(err.Error(), "exec") {
+	if !strings.Contains(err.Error(), "unsupported mode") {
 		t.Errorf("error message not informative: %v", err)
 	}
 }

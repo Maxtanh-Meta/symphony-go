@@ -15,9 +15,22 @@ import (
 	"github.com/logosc/symphony-go/internal/config"
 	internalexec "github.com/logosc/symphony-go/internal/exec"
 	"github.com/logosc/symphony-go/internal/github"
+	"github.com/logosc/symphony-go/internal/runner"
 	"github.com/logosc/symphony-go/internal/types"
 	"github.com/logosc/symphony-go/internal/workspace"
 )
+
+// multiTurnContinuePrompt is the short guidance sent on every turn after
+// the first in a multi-turn implementation session. Agents that consider
+// the work complete must end with the marker `## Done` (case-insensitive,
+// on its own line); the orchestrator stops driving turns when it sees it.
+const multiTurnContinuePrompt = `Continue with the next step of your plan. When the implementation is
+complete and tests pass, write the line ` + "`## Done`" + ` on its own and stop.`
+
+// doneMarker is the literal sentinel emitted by the agent on its own line
+// to signal end-of-multi-turn. Compared case-insensitively after trimming
+// whitespace.
+const doneMarker = "## Done"
 
 // planSuffix is appended to the rendered WORKFLOW.md prompt for the
 // planning phase. Tells the agent the `## Scope` block is mandatory and
@@ -319,15 +332,16 @@ func (o *Orchestrator) runImplementation(ctx context.Context, job *types.Job, is
 	implPrompt := rendered + fmt.Sprintf(implSuffixTmpl, job.PlanText)
 
 	log.Info("implementation_started")
-	implResult, ierr := o.deps.AgentRunner.Run(ctx, types.RunRequest{
+	implReq := types.RunRequest{
 		Issue:    issue,
 		RepoPath: layout.RepoPath,
 		HomePath: layout.HomePath,
 		Prompt:   implPrompt,
 		Phase:    types.PhaseImplementation,
 		Timeout:  time.Duration(cfg.Agent.TimeoutSeconds) * time.Second,
-	})
-	log.Info("implementation_completed", "success", implResult.Success, "err", ierr)
+	}
+	implResult, turnsUsed, ierr := o.runImplementationAgent(ctx, log, implReq)
+	log.Info("implementation_completed", "success", implResult.Success, "turns", turnsUsed, "err", ierr)
 
 	if cfg.Hooks.AfterRun != "" {
 		_ = o.runHook(ctx, "after_run.implementation", cfg.Hooks.AfterRun, layout, env)
@@ -424,6 +438,123 @@ func (o *Orchestrator) runImplementation(ctx context.Context, job *types.Job, is
 	}
 	job.Status = types.StatusPRReady
 	return o.saveJob(job)
+}
+
+// runImplementationAgent drives the implementation phase. When multi-turn
+// is enabled in config AND the runner supports MultiTurnRunner, it opens
+// a session and drives up to cfg.Agent.MaxTurns turns, stopping on the
+// first of: agent emits the `## Done` marker on its own line; a turn
+// returns Success=false; or the cap is reached. Otherwise it falls back
+// to a single AgentRunner.Run call.
+//
+// Returns the final RunResult (the one whose Success is reported to the
+// orchestrator), the number of turns executed (1 in single-turn mode),
+// and any Go-level error from the runner.
+func (o *Orchestrator) runImplementationAgent(ctx context.Context, log interface {
+	Info(msg string, args ...any)
+	Warn(msg string, args ...any)
+}, req types.RunRequest) (types.RunResult, int, error) {
+	cfg := o.deps.Config
+
+	if cfg.Agent.MultiTurn {
+		if mt, ok := o.deps.AgentRunner.(runner.MultiTurnRunner); ok {
+			res, n, err := o.runMultiTurnImpl(ctx, log, mt, req)
+			if !errors.Is(err, runner.ErrMultiTurnUnsupported) {
+				return res, n, err
+			}
+			log.Info("multi_turn_unsupported_fallback")
+		}
+	}
+	res, err := o.deps.AgentRunner.Run(ctx, req)
+	return res, 1, err
+}
+
+// runMultiTurnImpl opens a Session against the multi-turn runner and
+// loops as described in runImplementationAgent's doc comment. Each turn's
+// raw events are concatenated into a single RunResult.Events buffer.
+func (o *Orchestrator) runMultiTurnImpl(ctx context.Context, log interface {
+	Info(msg string, args ...any)
+	Warn(msg string, args ...any)
+}, mt runner.MultiTurnRunner, req types.RunRequest) (types.RunResult, int, error) {
+	cfg := o.deps.Config
+	maxTurns := cfg.Agent.MaxTurns
+	if maxTurns <= 0 {
+		maxTurns = 8
+	}
+
+	sess, err := mt.OpenSession(ctx, req)
+	if err != nil {
+		return types.RunResult{}, 0, err
+	}
+	defer func() { _ = sess.Close() }()
+
+	var (
+		last       types.RunResult
+		eventsBuf  bytes.Buffer
+		stderrAcc  bytes.Buffer
+		turns      int
+		startedAll = time.Now()
+	)
+	prompt := req.Prompt
+	for i := 0; i < maxTurns; i++ {
+		log.Info("multi_turn", "turn", i+1, "max", maxTurns)
+		res, terr := sess.Turn(ctx, prompt)
+		turns++
+
+		if len(res.Events) > 0 {
+			eventsBuf.Write(res.Events)
+			eventsBuf.WriteByte('\n')
+		}
+		if res.Stderr != "" {
+			stderrAcc.WriteString(res.Stderr)
+			stderrAcc.WriteByte('\n')
+		}
+
+		// Aggregate Text — keep the latest as the "answer" while still
+		// growing across turns for audit. The final res.Text is what the
+		// caller cares about; we keep it as-is.
+		last = res
+		if terr != nil {
+			last.Events = append([]byte(nil), eventsBuf.Bytes()...)
+			last.Stderr = stderrAcc.String()
+			if last.StartedAt.IsZero() {
+				last.StartedAt = startedAll
+			}
+			return last, turns, terr
+		}
+		if !res.Success {
+			break
+		}
+		if hasDoneMarker(res.Text) {
+			log.Info("multi_turn_done_marker")
+			break
+		}
+		prompt = multiTurnContinuePrompt
+	}
+
+	last.Events = append([]byte(nil), eventsBuf.Bytes()...)
+	if stderrAcc.Len() > 0 {
+		last.Stderr = stderrAcc.String()
+	}
+	if last.StartedAt.IsZero() {
+		last.StartedAt = startedAll
+	}
+	if last.CompletedAt.IsZero() {
+		last.CompletedAt = time.Now()
+	}
+	return last, turns, nil
+}
+
+// hasDoneMarker reports whether s contains the literal `## Done` line on
+// its own (case-insensitive after trimming surrounding whitespace).
+func hasDoneMarker(s string) bool {
+	want := strings.ToLower(doneMarker)
+	for _, line := range strings.Split(s, "\n") {
+		if strings.ToLower(strings.TrimSpace(line)) == want {
+			return true
+		}
+	}
+	return false
 }
 
 // runHook executes one hook script and returns a non-nil error iff the

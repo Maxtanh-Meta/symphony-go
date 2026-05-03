@@ -97,6 +97,16 @@ type AgentConfig struct {
 	Provider       string `yaml:"provider"`
 	Model          string `yaml:"model"`
 	TimeoutSeconds int    `yaml:"timeout_seconds"`
+	// MultiTurn enables provider-driven multi-turn continuation during the
+	// implementation phase. The orchestrator only honors this when the
+	// runner reports support (currently `codex.mode == "app-server"`); for
+	// other runners or modes the flag is a no-op and a single Run is used.
+	MultiTurn bool `yaml:"multi_turn"`
+	// MaxTurns is the upper bound on the number of turns the orchestrator
+	// will drive in a multi-turn implementation session. Defaults to 8.
+	// Also used by the Claude runner via claude.max_turns; this field is
+	// the cross-provider knob.
+	MaxTurns int `yaml:"max_turns"`
 }
 
 // ClaudeConfig is the provider-specific configuration for the Claude
@@ -230,6 +240,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Agent.TimeoutSeconds == 0 {
 		cfg.Agent.TimeoutSeconds = 3600
+	}
+	if cfg.Agent.MaxTurns == 0 {
+		cfg.Agent.MaxTurns = 8
 	}
 	if cfg.Claude.MaxTurns == 0 {
 		cfg.Claude.MaxTurns = 20
