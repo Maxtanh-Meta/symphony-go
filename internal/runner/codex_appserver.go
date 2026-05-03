@@ -56,12 +56,12 @@ const appServerMaxLine = 16 * 1024 * 1024
 // jsonrpcMessage is a permissive JSON-RPC 2.0 message. Either Method (for
 // requests/notifications) or one of Result/Error (for responses) is set.
 type jsonrpcMessage struct {
-	JSONRPC string          `json:"jsonrpc"`
+	JSONRPC string           `json:"jsonrpc"`
 	ID      *json.RawMessage `json:"id,omitempty"`
-	Method  string          `json:"method,omitempty"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *jsonrpcError   `json:"error,omitempty"`
+	Method  string           `json:"method,omitempty"`
+	Params  json.RawMessage  `json:"params,omitempty"`
+	Result  json.RawMessage  `json:"result,omitempty"`
+	Error   *jsonrpcError    `json:"error,omitempty"`
 }
 
 // jsonrpcError is the standard JSON-RPC 2.0 error object.
