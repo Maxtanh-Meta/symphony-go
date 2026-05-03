@@ -1,0 +1,127 @@
+// Package types defines the cross-cutting data types shared across
+// minisymphony packages. Config-specific types live in internal/config.
+package types
+
+import "time"
+
+// Phase identifies which phase of an agent run is executing.
+type Phase string
+
+const (
+	PhasePlanning       Phase = "planning"
+	PhaseReview         Phase = "review"
+	PhaseImplementation Phase = "implementation"
+)
+
+// JobStatus is the orchestrator's local view of a job's progress through
+// its lifecycle. Mirrors the GitHub label state machine but uses snake_case.
+type JobStatus string
+
+const (
+	StatusPlanning         JobStatus = "planning"
+	StatusAwaitingApproval JobStatus = "awaiting_approval"
+	StatusImplementing     JobStatus = "implementing"
+	StatusPRReady          JobStatus = "pr_ready"
+	StatusFailed           JobStatus = "failed"
+	StatusBlocked          JobStatus = "blocked"
+)
+
+// ApprovalMode is the global approval policy from config.yml.
+type ApprovalMode string
+
+const (
+	ApprovalGated   ApprovalMode = "gated"
+	ApprovalAuto    ApprovalMode = "auto"
+	ApprovalHandoff ApprovalMode = "handoff"
+)
+
+// ApprovalPath records which gate let a plan through, persisted on Job
+// for audit and PR-body provenance.
+type ApprovalPath string
+
+const (
+	ApprovalPathRules    ApprovalPath = "rules"
+	ApprovalPathReviewer ApprovalPath = "reviewer"
+	ApprovalPathHuman    ApprovalPath = "human"
+	ApprovalPathHandoff  ApprovalPath = "handoff"
+)
+
+// Issue is the normalized GitHub issue payload used by the orchestrator
+// and prompt template engine.
+type Issue struct {
+	Number      int       `json:"number"`
+	ID          string    `json:"id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	URL         string    `json:"url"`
+	Labels      []string  `json:"labels"`
+	State       string    `json:"state"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// IssueComment is a normalized GitHub issue comment used by the approval
+// poller (gated mode) and reconciliation.
+type IssueComment struct {
+	ID        int64     `json:"id"`
+	User      string    `json:"user"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// PlanScope is the structured `## Scope` block parsed from the agent's
+// planning output. Drives auto-approval rule evaluation and post-impl
+// diff verification.
+type PlanScope struct {
+	FilesTouched          []string `json:"files_touched"           yaml:"files_touched"`
+	EstimatedLinesAdded   int      `json:"estimated_lines_added"   yaml:"estimated_lines_added"`
+	EstimatedLinesRemoved int      `json:"estimated_lines_removed" yaml:"estimated_lines_removed"`
+	RiskSummary           string   `json:"risk_summary"            yaml:"risk_summary"`
+}
+
+// ReviewerDecision is the parsed `## Decision` block from a reviewer run.
+type ReviewerDecision struct {
+	Decision string   `json:"decision"` // "approve" | "reject"
+	Reasons  []string `json:"reasons"`
+}
+
+// Job is the on-disk job state. Persisted to
+// .minisymphony/state/jobs/{issue_number}.json.
+type Job struct {
+	IssueNumber       int               `json:"issue_number"`
+	Repo              string            `json:"repo"`
+	Status            JobStatus         `json:"status"`
+	WorkspaceRoot     string            `json:"workspace_root"`
+	RepoPath          string            `json:"repo_path"`
+	Branch            string            `json:"branch"`
+	PlanCommentID     int64             `json:"plan_comment_id,omitempty"`
+	PlanText          string            `json:"plan_text,omitempty"`
+	PlanScope         *PlanScope        `json:"plan_scope,omitempty"`
+	ApprovalPath      ApprovalPath      `json:"approval_path,omitempty"`
+	ApprovalCommentID int64             `json:"approval_comment_id,omitempty"`
+	ReviewerDecision  *ReviewerDecision `json:"reviewer_decision,omitempty"`
+	PRNumber          int               `json:"pr_number,omitempty"`
+	Attempt           int               `json:"attempt"`
+	UpdatedAt         time.Time         `json:"updated_at"`
+}
+
+// RunRequest is what the orchestrator hands to an AgentRunner.
+type RunRequest struct {
+	Issue    Issue
+	RepoPath string
+	HomePath string
+	Prompt   string
+	Phase    Phase
+	Timeout  time.Duration
+}
+
+// RunResult is what an AgentRunner returns. Stderr and Events are already
+// redacted by the runner before being returned.
+type RunResult struct {
+	Success     bool
+	Text        string // final agent output suitable for plan body or PR body
+	Stderr      string // captured, redacted
+	Events      []byte // raw event log, redacted (e.g., stream-json line buffer)
+	StartedAt   time.Time
+	CompletedAt time.Time
+}

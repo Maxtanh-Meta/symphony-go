@@ -1,0 +1,31 @@
+# Built binaries
+/minisymphony
+/cmd/minisymphony/minisymphony
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.txt
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# minisymphony runtime data
+.minisymphony/
+
+# Local environment overrides
+*.local.yml
+.env
+.env.local
