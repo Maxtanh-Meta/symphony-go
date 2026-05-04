@@ -28,6 +28,7 @@ func ParseScope(planBody string) (*types.PlanScope, error) {
 	if !found {
 		return parseSingleFileFallback(planBody), nil
 	}
+	body = stripCodeFences(body)
 
 	var raw struct {
 		FilesTouched          []string `yaml:"files_touched"`
@@ -139,6 +140,32 @@ func singleFileScope(path string) *types.PlanScope {
 		FilesTouched: []string{path},
 		RiskSummary:  "single-file plan fallback",
 	}
+}
+
+// stripCodeFences removes a single leading ```[lang] line and its
+// matching trailing ``` line from a scope-block body. LLMs frequently
+// wrap structured output in fenced blocks despite the prompt saying
+// not to; strip the wrapper before yaml.Unmarshal so we don't reject
+// otherwise-valid plans.
+func stripCodeFences(body string) string {
+	lines := strings.Split(body, "\n")
+	start, end := 0, len(lines)
+	for start < end && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	for end > start && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	if end-start < 2 {
+		return body
+	}
+	if !strings.HasPrefix(strings.TrimSpace(lines[start]), "```") {
+		return body
+	}
+	if strings.TrimSpace(lines[end-1]) != "```" {
+		return body
+	}
+	return strings.Join(lines[start+1:end-1], "\n")
 }
 
 // extractScopeBlock walks planBody line-by-line, finds a heading whose

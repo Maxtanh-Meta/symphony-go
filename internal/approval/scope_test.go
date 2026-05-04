@@ -164,6 +164,53 @@ func TestParseScope_CaseInsensitiveHeading(t *testing.T) {
 	}
 }
 
+// TestParseScope_FencedYAMLBlock: LLMs (e.g. Codex) sometimes wrap the
+// scope yaml in a ```yaml ... ``` fence despite the prompt saying not
+// to. The parser must tolerate the wrapper. Regression for issue
+// print-my-ideas/print-my-ideas#62.
+func TestParseScope_FencedYAMLBlock(t *testing.T) {
+	body := strings.Join([]string{
+		"## Scope",
+		"```yaml",
+		"files_touched:",
+		"  - shopify/src/worker.ts",
+		"  - shopify/extensions/ai-customizer-src/ai-customizer.js",
+		"estimated_lines_added: 45",
+		"estimated_lines_removed: 8",
+		"risk_summary: additive change",
+		"```",
+	}, "\n")
+	s, err := ParseScope(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s == nil {
+		t.Fatal("expected scope, got nil")
+	}
+	if len(s.FilesTouched) != 2 {
+		t.Errorf("FilesTouched = %v", s.FilesTouched)
+	}
+	if s.EstimatedLinesAdded != 45 || s.EstimatedLinesRemoved != 8 {
+		t.Errorf("estimates = +%d -%d", s.EstimatedLinesAdded, s.EstimatedLinesRemoved)
+	}
+	if s.RiskSummary != "additive change" {
+		t.Errorf("RiskSummary = %q", s.RiskSummary)
+	}
+}
+
+// TestParseScope_FencedPlainBlock: same as above but with an unlabeled
+// ``` fence (no language hint).
+func TestParseScope_FencedPlainBlock(t *testing.T) {
+	body := "## Scope\n```\nfiles_touched: [a.go]\n```\n"
+	s, err := ParseScope(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s == nil || len(s.FilesTouched) != 1 || s.FilesTouched[0] != "a.go" {
+		t.Errorf("scope = %+v", s)
+	}
+}
+
 func TestParseScope_BoundedByNextH2(t *testing.T) {
 	body := strings.Join([]string{
 		"## Scope",
