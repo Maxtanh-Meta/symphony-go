@@ -14,15 +14,23 @@ in production.
 
 ## Reporting a vulnerability
 
-- **Private email:** `security@logosc.dev`
-- **GitHub Security Advisory** (preferred): use the repository's
-  *Private vulnerability reporting* form. This routes the report to
-  the same maintainers and gives us a private fork to work in.
+Use GitHub's **Private Vulnerability Reporting** form:
+
+> https://github.com/logosc/symphony-go/security/advisories/new
+
+Or navigate via the repo's *Security* tab → *Report a vulnerability*.
+This is a private channel — only repository maintainers see it. The
+filed report becomes a draft Security Advisory, which we use to
+coordinate the fix and (when ready) publish a CVE.
+
 - **First response:** within 5 business days.
 - **Embargo:** 30 days from first response, extensible by mutual
   agreement if a fix needs more time or coordinated disclosure.
 
-Please do not open a public issue for suspected vulnerabilities.
+Please do not open a **public** issue for suspected vulnerabilities —
+the private form above is the only supported channel for embargoed
+reports. Public issues are fine for hardening suggestions, questions
+about the threat model, or anything that does not require embargo.
 
 ## Scope (in scope)
 
