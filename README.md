@@ -4,24 +4,35 @@
 > **plan → approve → implement → validate → draft PR** for any GitHub
 > issue labeled `symphony:ready`. You review the PR and merge.
 
+Not just for code. The same loop ships research reports, marketing
+assets, deploy notes, mockups — anything the agent can produce as a
+file under version control. A draft PR is the durable audit trail for
+every axis of work you assign it.
+
 ## Why
 
-Coding agents are fast, but you don't want them unattended on your repo.
-symphony-go wraps a coding agent so it can:
+Modern coding agents (claude / codex) write code, but they also draft
+docs, run research, generate marketing copy, sketch mockups, and assemble
+release notes. symphony-go gives any of those work streams the same
+loop:
 
 - pick up GitHub issues at its own cadence — no babysitting
-- post a `## Plan` comment before touching any code
-- be gated per issue label by a human, a rules+reviewer pipeline, or
-  no gate at all
+- post a `## Plan` comment before touching any artifact
+- pick the right tool surface, model, and approval mode **per issue
+  label**, so one orchestrator can drive `type:code`,
+  `type:research`, `type:marketing-creative`, `type:deploy`, and more
+  on one repo (see [`docs/per-axis-config.md`](docs/per-axis-config.md))
+- be gated by a human, by a rules+reviewer pipeline, or by no gate at
+  all — your choice per axis
 - never push to your default branch — PRs are always draft, a human
-  marks them ready
+  marks them ready and merges
 - restart cleanly after a crash via a 19-row reconcile table (no DB)
 
 The default `auto` mode puts **three independent gates** between the
 agent's plan and the PR: a deny-by-default rules engine, a separate
 reviewer model running read-only, and a post-implementation diff
 verifier that compares the actual diff against the plan's claimed
-scope. No single LLM call decides whether code ships.
+scope. No single LLM call decides whether anything ships.
 
 Local-first: one Go binary, no SaaS, no database. The agent runs as a
 subprocess in an isolated `$HOME` and never receives a GitHub token —
@@ -29,9 +40,12 @@ the orchestrator owns every label transition, comment, and PR creation
 itself.
 
 A security-first profile of OpenAI Symphony — same architecture,
-tighter trust model, GitHub-Issues-native instead of Linear.
+tighter trust model, GitHub-Issues-native instead of Linear, and
+multi-axis via the `*_by_label` config family (proposal 0001).
 
-See [`SPEC.md`](./SPEC.md) for the full design and
+See [`SPEC.md`](./SPEC.md) for the full design,
+[`docs/per-axis-config.md`](docs/per-axis-config.md) for the multi-axis
+operator how-to, and
 [`docs/M6-real-runner-smoke.md`](docs/M6-real-runner-smoke.md) for the
 end-to-end runbook.
 
