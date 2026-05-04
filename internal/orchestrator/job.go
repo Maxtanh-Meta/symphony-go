@@ -365,7 +365,19 @@ func (o *Orchestrator) runImplementation(ctx context.Context, job *types.Job, is
 		return o.markFailed(ctx, job, fmt.Sprintf("implementation agent: %v", ierr))
 	}
 	if !implResult.Success {
-		return o.markFailed(ctx, job, "implementation agent reported failure")
+		if o.resolveApprovalMode(job) != "handoff" {
+			return o.markFailed(ctx, job, "implementation agent reported failure")
+		}
+		statusOut, statusErr := gitStatusPorcelain(ctx, layout.RepoPath)
+		if statusErr != nil {
+			return o.markFailed(ctx, job, fmt.Sprintf("git status after failed handoff implementation: %v", statusErr))
+		}
+		if strings.TrimSpace(statusOut) == "" {
+			return o.markFailed(ctx, job, "implementation agent reported failure")
+		}
+		_, _ = o.deps.GitHub.PostIssueComment(ctx, issue.Number,
+			"[symphony-go] handoff implementation reported failure but produced a diff; continuing to PR for human review.")
+		log.Warn("handoff_failed_with_diff_continuing")
 	}
 
 	// 11. git status --porcelain.
