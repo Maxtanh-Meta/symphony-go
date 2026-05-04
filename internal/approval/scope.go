@@ -55,25 +55,86 @@ func ParseScope(planBody string) (*types.PlanScope, error) {
 }
 
 func parseSingleFileFallback(planBody string) *types.PlanScope {
+	if path := parseOnlyFileTouched(planBody); path != "" {
+		return singleFileScope(path)
+	}
+	if path := parseUniqueBacktickedPath(planBody); path != "" {
+		return singleFileScope(path)
+	}
+	return nil
+}
+
+func parseOnlyFileTouched(planBody string) string {
 	lower := strings.ToLower(planBody)
 	idx := strings.Index(lower, "only file touched")
 	if idx == -1 {
-		return nil
+		return ""
 	}
 	rest := planBody[idx:]
 	firstTick := strings.Index(rest, "`")
 	if firstTick == -1 {
-		return nil
+		return ""
 	}
 	rest = rest[firstTick+1:]
 	secondTick := strings.Index(rest, "`")
 	if secondTick == -1 {
-		return nil
+		return ""
 	}
 	path := strings.TrimSpace(rest[:secondTick])
 	if path == "" || strings.Contains(path, "\n") {
-		return nil
+		return ""
 	}
+	return path
+}
+
+func parseUniqueBacktickedPath(planBody string) string {
+	var paths []string
+	rest := planBody
+	for {
+		firstTick := strings.Index(rest, "`")
+		if firstTick == -1 {
+			break
+		}
+		rest = rest[firstTick+1:]
+		secondTick := strings.Index(rest, "`")
+		if secondTick == -1 {
+			break
+		}
+		token := strings.TrimSpace(rest[:secondTick])
+		rest = rest[secondTick+1:]
+		if looksLikeRepoPath(token) {
+			paths = append(paths, token)
+		}
+	}
+	seen := make(map[string]struct{}, len(paths))
+	var unique []string
+	for _, p := range paths {
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		unique = append(unique, p)
+	}
+	if len(unique) != 1 {
+		return ""
+	}
+	return unique[0]
+}
+
+func looksLikeRepoPath(token string) bool {
+	if token == "" || strings.ContainsAny(token, " \t\n\r") {
+		return false
+	}
+	if strings.HasPrefix(token, "/") || strings.Contains(token, "..") {
+		return false
+	}
+	if !strings.Contains(token, "/") || !strings.Contains(token, ".") {
+		return false
+	}
+	return true
+}
+
+func singleFileScope(path string) *types.PlanScope {
 	return &types.PlanScope{
 		FilesTouched: []string{path},
 		RiskSummary:  "single-file plan fallback",

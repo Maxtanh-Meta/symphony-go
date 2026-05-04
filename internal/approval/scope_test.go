@@ -107,6 +107,36 @@ func TestParseScope_SingleFileFallback(t *testing.T) {
 	}
 }
 
+func TestParseScope_UniqueBacktickedPathFallback(t *testing.T) {
+	body := strings.Join([]string{
+		"**Change:**",
+		"Edit `shopify/CLAUDE.md` near the top.",
+		"",
+		"**Verification:** `cd shopify && npm run typecheck`",
+	}, "\n")
+	s, err := ParseScope(body)
+	if err != nil {
+		t.Fatalf("expected nil err, got %v", err)
+	}
+	if s == nil {
+		t.Fatal("expected fallback scope, got nil")
+	}
+	if len(s.FilesTouched) != 1 || s.FilesTouched[0] != "shopify/CLAUDE.md" {
+		t.Errorf("FilesTouched = %v", s.FilesTouched)
+	}
+}
+
+func TestParseScope_UniqueBacktickedPathFallbackAmbiguous(t *testing.T) {
+	body := "Edit `a/file.md` and maybe `b/file.md`."
+	s, err := ParseScope(body)
+	if err != nil {
+		t.Fatalf("expected nil err, got %v", err)
+	}
+	if s != nil {
+		t.Errorf("expected nil scope for ambiguous fallback, got %+v", s)
+	}
+}
+
 func TestParseScope_MalformedYAML(t *testing.T) {
 	body := "## Scope\nfiles_touched: [a, b\nrisk_summary: x\n"
 	_, err := ParseScope(body)
