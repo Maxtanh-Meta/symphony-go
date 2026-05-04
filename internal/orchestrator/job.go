@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -518,7 +519,8 @@ func (o *Orchestrator) runImplementation(ctx context.Context, job *types.Job, is
 
 	// 16. Create draft PR.
 	workflowEdited := planTouchesWorkflow(statusOut, cfg.Repo.WorkflowFile)
-	prBody := buildPRBody(job, results, workflowEdited)
+	proofArtifacts := collectProofArtifacts(statusOut, issue.Number)
+	prBody := buildPRBody(job, results, workflowEdited, proofArtifacts)
 	prTitle := truncatePRTitle(issue.Title)
 	pr, perr := o.deps.GitHub.CreateDraftPR(ctx, github.CreatePRRequest{
 		Title: prTitle,
@@ -882,8 +884,8 @@ type valResult struct {
 }
 
 // buildPRBody composes the PR body from job state, validation results,
-// and the workflow-edited warning if applicable.
-func buildPRBody(job *types.Job, results []valResult, workflowEdited bool) string {
+// proof artifacts, and the workflow-edited warning if applicable.
+func buildPRBody(job *types.Job, results []valResult, workflowEdited bool, proofArtifacts []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Resolves #%d.\n\n", job.IssueNumber)
 	fmt.Fprintf(&b, "Approval path: `%s`\n\n", job.ApprovalPath)
@@ -897,6 +899,17 @@ func buildPRBody(job *types.Job, results []valResult, workflowEdited bool) strin
 	for _, r := range results {
 		fmt.Fprintf(&b, "| `%s` | %d |\n", r.Cmd, r.ExitCode)
 	}
+	if len(proofArtifacts) > 0 {
+		b.WriteString("\n## Proof Artifacts\n\n")
+		for _, p := range proofArtifacts {
+			name := path.Base(p)
+			if isEmbeddableProofImage(p) {
+				fmt.Fprintf(&b, "![%s](%s)\n\n", name, p)
+				continue
+			}
+			fmt.Fprintf(&b, "- [%s](%s)\n", p, p)
+		}
+	}
 	if workflowEdited {
 		b.WriteString("\n## Warnings\n\n")
 		b.WriteString("[symphony-go] agent modified WORKFLOW.md; review carefully before merge.\n")
@@ -906,6 +919,33 @@ func buildPRBody(job *types.Job, results []valResult, workflowEdited bool) strin
 		out = out[:60000]
 	}
 	return out
+}
+
+// collectProofArtifacts returns changed proof assets under docs/proof/<issue>/.
+func collectProofArtifacts(porcelain string, issueNumber int) []string {
+	prefix := fmt.Sprintf("docs/proof/%d/", issueNumber)
+	var out []string
+	seen := map[string]struct{}{}
+	for _, p := range approval.FilesFromGitStatus(porcelain) {
+		if !strings.HasPrefix(p, prefix) || strings.HasSuffix(p, "/") {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	return out
+}
+
+func isEmbeddableProofImage(p string) bool {
+	switch strings.ToLower(path.Ext(p)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp":
+		return true
+	default:
+		return false
+	}
 }
 
 // planTouchesWorkflow reports whether the porcelain output mentions the

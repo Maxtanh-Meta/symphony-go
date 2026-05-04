@@ -521,6 +521,40 @@ func TestHandoffModeAgentCommittedDiff(t *testing.T) {
 	}
 }
 
+func TestCollectProofArtifacts(t *testing.T) {
+	status := strings.Join([]string{
+		" M docs/proof/63/after.png",
+		"?? docs/proof/63/repro.webm",
+		"?? docs/proof/62/other.png",
+		" M shopify/src/worker.ts",
+	}, "\n")
+
+	got := collectProofArtifacts(status, 63)
+	want := []string{"docs/proof/63/after.png", "docs/proof/63/repro.webm"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("proof artifacts mismatch:\ngot  %v\nwant %v", got, want)
+	}
+}
+
+func TestBuildPRBodyIncludesProofArtifacts(t *testing.T) {
+	job := &types.Job{IssueNumber: 63, ApprovalPath: types.ApprovalPathReviewer}
+
+	body := buildPRBody(job, nil, false, []string{
+		"docs/proof/63/after.png",
+		"docs/proof/63/repro.webm",
+	})
+
+	if !strings.Contains(body, "## Proof Artifacts") {
+		t.Fatalf("missing proof section:\n%s", body)
+	}
+	if !strings.Contains(body, "![after.png](docs/proof/63/after.png)") {
+		t.Fatalf("missing embedded screenshot:\n%s", body)
+	}
+	if !strings.Contains(body, "[docs/proof/63/repro.webm](docs/proof/63/repro.webm)") {
+		t.Fatalf("missing video link:\n%s", body)
+	}
+}
+
 func TestEmptyPlanDoesNotPostBlankComment(t *testing.T) {
 	h := newTestHarness(t)
 	h.cfg.Approval.Mode = "handoff"
