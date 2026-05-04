@@ -103,6 +103,17 @@ type Orchestrator struct {
 	// inflightWG tracks goroutines spawned by the dispatch loop so Run
 	// can drain on context cancellation.
 	inflightWG sync.WaitGroup
+	// worktreeCreateMu serializes calls to WorkspaceMgr.Create across
+	// concurrent ProcessIssue goroutines. `git worktree add -b <branch>`
+	// writes branch upstream config in the shared local repo, which
+	// races on `.git/config.lock` when two creates run concurrently
+	// (observed as "could not lock config file .git/config: File exists"
+	// from a second concurrent worktree add). Holding this mutex around
+	// Create makes per-issue worktree provisioning safe under any
+	// MaxConcurrentJobs > 1. See concurrency_test.go's
+	// TestRunCancelDrains / TestMaxConcurrentJobsParallel for the
+	// regression that surfaced this.
+	worktreeCreateMu sync.Mutex
 }
 
 // New validates deps and returns an Orchestrator ready to Run.

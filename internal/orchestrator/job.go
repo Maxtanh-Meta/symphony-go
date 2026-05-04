@@ -116,7 +116,13 @@ func (o *Orchestrator) ProcessIssue(ctx context.Context, issue types.Issue) erro
 		if !os.IsNotExist(err) {
 			return o.markBlocked(ctx, job, fmt.Sprintf("worktree stat: %v", err))
 		}
-		if err := o.deps.WorkspaceMgr.Create(ctx, layout, cfg.Repo.BaseBranch, branch); err != nil {
+		// Serialize concurrent worktree creates against the shared local
+		// repo: `git worktree add -b` writes branch upstream config that
+		// races on `.git/config.lock`. See deps.go (worktreeCreateMu).
+		o.worktreeCreateMu.Lock()
+		err := o.deps.WorkspaceMgr.Create(ctx, layout, cfg.Repo.BaseBranch, branch)
+		o.worktreeCreateMu.Unlock()
+		if err != nil {
 			log.Error("worktree create failed", "err", err)
 			return o.markBlocked(ctx, job, fmt.Sprintf("worktree create: %v", err))
 		}

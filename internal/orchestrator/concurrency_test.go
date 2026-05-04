@@ -315,11 +315,14 @@ func TestRunCancelDrains(t *testing.T) {
 		runDone <- o.Run(ctx, false)
 	}()
 
-	// Wait for both jobs to enter planning.
+	// Wait for both jobs to enter planning. Generous timeout because CI
+	// runs are noticeably slower than dev laptops (the dispatch loop must
+	// fire its 1s tick, then both goroutines must spawn, set up worktrees,
+	// and reach the fake runner — each step can stretch on a 2-core CI).
 	for i := 0; i < 2; i++ {
 		select {
 		case <-bar.planningEntered:
-		case <-time.After(15 * time.Second):
+		case <-time.After(60 * time.Second):
 			cancel()
 			<-runDone
 			t.Fatalf("only %d planning entrants observed (want 2)", i)
