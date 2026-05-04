@@ -186,11 +186,15 @@ func (o *Orchestrator) ProcessIssue(ctx context.Context, issue types.Issue) erro
 	}
 
 	// 7. Post plan + parse scope.
-	planComment, perr := o.deps.GitHub.PostIssueComment(ctx, issue.Number, planResult.Text)
-	if perr != nil {
-		log.Error("plan comment post failed", "err", perr)
+	if strings.TrimSpace(planResult.Text) == "" {
+		log.Warn("plan_empty")
 	} else {
-		job.PlanCommentID = planComment.ID
+		planComment, perr := o.deps.GitHub.PostIssueComment(ctx, issue.Number, planResult.Text)
+		if perr != nil {
+			log.Error("plan comment post failed", "err", perr)
+		} else {
+			job.PlanCommentID = planComment.ID
+		}
 	}
 	job.PlanText = planResult.Text
 	scope, scopeErr := approval.ParseScope(planResult.Text)

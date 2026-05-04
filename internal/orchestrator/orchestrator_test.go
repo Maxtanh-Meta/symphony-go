@@ -521,6 +521,29 @@ func TestHandoffModeAgentCommittedDiff(t *testing.T) {
 	}
 }
 
+func TestEmptyPlanDoesNotPostBlankComment(t *testing.T) {
+	h := newTestHarness(t)
+	h.cfg.Approval.Mode = "handoff"
+	o := h.newOrch(t, "x", false)
+
+	h.runner.Responses[types.PhasePlanning] = types.RunResult{Success: true, Text: "   \n"}
+	implWriter(h.runner, []string{"a.txt"})
+
+	iss := h.seedReadyIssue(19, "empty plan")
+	if err := o.ProcessIssue(context.Background(), iss); err != nil {
+		t.Fatalf("ProcessIssue: %v", err)
+	}
+	comments, err := h.gh.ListIssueComments(context.Background(), 19, time.Time{})
+	if err != nil {
+		t.Fatalf("ListIssueComments: %v", err)
+	}
+	for _, c := range comments {
+		if strings.TrimSpace(c.Body) == "" {
+			t.Fatalf("posted blank comment: %#v", comments)
+		}
+	}
+}
+
 // TestPerAxisWorkflowAndValidation verifies the G11+G12 wiring: a
 // two-axis config (type:code + type:research) with per-axis workflow
 // files and per-axis validation commands. Each issue is processed in
