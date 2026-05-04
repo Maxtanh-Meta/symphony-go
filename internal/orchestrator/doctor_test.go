@@ -10,12 +10,48 @@ import (
 	"github.com/logosc/symphony-go/internal/config"
 )
 
+// TestDoctorRejectsConfigInsideRepo_ExplicitPath: when the resolved
+// config path passed to Doctor is under cfg.Repo.LocalPath, doctor
+// reports the path-inside-repo violation regardless of whether the
+// SYMPHONY_GO_CONFIG env var is set. Regression for the gap surfaced by
+// the print-my-ideas migration plan: previously only the env-var path
+// was checked, so `--config /inside/repo.yml` slipped through.
+func TestDoctorRejectsConfigInsideRepo_ExplicitPath(t *testing.T) {
+	h := newTestHarness(t)
+	t.Setenv("SYMPHONY_GO_CONFIG", "")
+	bad := filepath.Join(h.cfg.Repo.LocalPath, "config.yml")
+	err := Doctor(context.Background(), bad, h.cfg)
+	if err == nil {
+		t.Fatalf("expected path-inside-repo error, got nil")
+	}
+	if !strings.Contains(err.Error(), "under repo.local_path") {
+		t.Fatalf("expected path-inside-repo error, got %v", err)
+	}
+}
+
+// TestDoctorRejectsConfigInsideRepo_EnvFallback: when the resolved-path
+// argument is empty, Doctor still falls back to SYMPHONY_GO_CONFIG and
+// catches a violation set there. (The pre-existing behavior; verifies
+// the fallback wasn't broken by the new arg.)
+func TestDoctorRejectsConfigInsideRepo_EnvFallback(t *testing.T) {
+	h := newTestHarness(t)
+	bad := filepath.Join(h.cfg.Repo.LocalPath, "config.yml")
+	t.Setenv("SYMPHONY_GO_CONFIG", bad)
+	err := Doctor(context.Background(), "", h.cfg)
+	if err == nil {
+		t.Fatalf("expected path-inside-repo error, got nil")
+	}
+	if !strings.Contains(err.Error(), "under repo.local_path") {
+		t.Fatalf("expected path-inside-repo error, got %v", err)
+	}
+}
+
 // TestDoctorMissingToken: a config with no token in env should fail.
 func TestDoctorMissingToken(t *testing.T) {
 	h := newTestHarness(t)
 	h.cfg.GitHub.TokenEnv = "DEFINITELY_NOT_SET_XYZ"
 	t.Setenv("DEFINITELY_NOT_SET_XYZ", "")
-	err := Doctor(context.Background(), h.cfg)
+	err := Doctor(context.Background(), "", h.cfg)
 	if err == nil || !strings.Contains(err.Error(), "DEFINITELY_NOT_SET_XYZ") {
 		t.Fatalf("expected token-empty error, got %v", err)
 	}
@@ -31,7 +67,7 @@ func TestDoctorAutoModeMissingCatchAll(t *testing.T) {
 	}
 	h.cfg.Auto.FallbackOnNoRuleMatch = ""
 	t.Setenv(h.cfg.GitHub.TokenEnv, "")
-	err := Doctor(context.Background(), h.cfg)
+	err := Doctor(context.Background(), "", h.cfg)
 	if err == nil || !strings.Contains(err.Error(), "fallback_on_no_rule_match") {
 		t.Fatalf("expected catch-all/fallback error, got %v", err)
 	}
@@ -42,7 +78,7 @@ func TestDoctorBaseBranchMissing(t *testing.T) {
 	h := newTestHarness(t)
 	h.cfg.Repo.BaseBranch = "branch-that-does-not-exist"
 	t.Setenv(h.cfg.GitHub.TokenEnv, "")
-	err := Doctor(context.Background(), h.cfg)
+	err := Doctor(context.Background(), "", h.cfg)
 	if err == nil || !strings.Contains(err.Error(), "base branch") {
 		t.Fatalf("expected base-branch error, got %v", err)
 	}
@@ -73,7 +109,7 @@ func TestDoctorPerAxisWorkflowFilesPositive(t *testing.T) {
 		},
 	}
 	t.Setenv(h.cfg.GitHub.TokenEnv, "")
-	err := Doctor(context.Background(), h.cfg)
+	err := Doctor(context.Background(), "", h.cfg)
 	if err == nil {
 		return
 	}
@@ -96,7 +132,7 @@ func TestDoctorPerAxisWorkflowFilesMissingFile(t *testing.T) {
 		},
 	}
 	t.Setenv(h.cfg.GitHub.TokenEnv, "")
-	err := Doctor(context.Background(), h.cfg)
+	err := Doctor(context.Background(), "", h.cfg)
 	if err == nil || !strings.Contains(err.Error(), "does-not-exist.md") {
 		t.Fatalf("expected missing-file error, got %v", err)
 	}
@@ -113,7 +149,7 @@ func TestDoctorApprovalModeByLabelInvalidValue(t *testing.T) {
 		},
 	}
 	t.Setenv(h.cfg.GitHub.TokenEnv, "")
-	err := Doctor(context.Background(), h.cfg)
+	err := Doctor(context.Background(), "", h.cfg)
 	if err == nil || !strings.Contains(err.Error(), "gated|auto|handoff") {
 		t.Fatalf("expected enum violation, got %v", err)
 	}
@@ -130,7 +166,7 @@ func TestDoctorApprovalModeByLabelMissingDefault(t *testing.T) {
 		},
 	}
 	t.Setenv(h.cfg.GitHub.TokenEnv, "")
-	err := Doctor(context.Background(), h.cfg)
+	err := Doctor(context.Background(), "", h.cfg)
 	if err == nil || !strings.Contains(err.Error(), "approval.mode_by_label") {
 		t.Fatalf("expected approval.mode_by_label error, got %v", err)
 	}
@@ -147,7 +183,7 @@ func TestDoctorClaudeImplToolsByLabelMissingDefault(t *testing.T) {
 		},
 	}
 	t.Setenv(h.cfg.GitHub.TokenEnv, "")
-	err := Doctor(context.Background(), h.cfg)
+	err := Doctor(context.Background(), "", h.cfg)
 	if err == nil || !strings.Contains(err.Error(), "claude.implementation_tools_by_label") {
 		t.Fatalf("expected claude.implementation_tools_by_label error, got %v", err)
 	}

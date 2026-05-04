@@ -263,7 +263,7 @@ func doctorCommand(args []string) int {
 		fmt.Fprintf(os.Stderr, "config integrity: %v\n", err)
 		return 1
 	}
-	if err := orchestrator.Doctor(context.Background(), cfg); err != nil {
+	if err := orchestrator.Doctor(context.Background(), resolved, cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "doctor: %v\n", err)
 		return 1
 	}

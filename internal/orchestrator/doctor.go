@@ -19,10 +19,18 @@ import (
 // Doctor runs the SPEC §12 checks against cfg and the live environment.
 // Returns a multi-error (errors.Join) on any failure, nil on success.
 //
+// resolvedConfigPath is the absolute path of the config file the caller
+// loaded (typically the value `cmd/symphony-go/main.go::resolveConfigPath`
+// returned). When non-empty, doctor enforces the SPEC §2 invariant
+// "config file MUST NOT be under repo.local_path" against it. When
+// empty, doctor falls back to the SYMPHONY_GO_CONFIG env var, and if
+// that is also empty the path-integrity check is skipped (only Validate
+// + IntegrityGuard at construction time will have caught it).
+//
 // Doctor is intentionally permissive: it does not require the
 // orchestrator to already be wired up. It expects cfg to be already
 // validated by config.Validate (Load does this for you).
-func Doctor(ctx context.Context, cfg *config.Config) error {
+func Doctor(ctx context.Context, resolvedConfigPath string, cfg *config.Config) error {
 	if cfg == nil {
 		return errors.New("doctor: nil config")
 	}
@@ -30,18 +38,23 @@ func Doctor(ctx context.Context, cfg *config.Config) error {
 
 	// 1, 2 happen at config load + integrity-guard construction time.
 	// Re-run the path-inside-repo check here so doctor catches it without
-	// requiring the caller to have built a guard first.
+	// requiring the caller to have built a guard first. Prefer the
+	// caller-supplied resolved path (covers `--config <path>` invocations)
+	// and fall back to the SYMPHONY_GO_CONFIG env var.
 	// NOTE: filepath.Abs("") returns the current working directory rather
-	// than the empty string, so we must guard with the raw env-var lookup.
-	rawCfgEnv := os.Getenv("SYMPHONY_GO_CONFIG")
+	// than the empty string, so we must guard with explicit emptiness checks.
+	rawCfgPath := resolvedConfigPath
+	if rawCfgPath == "" {
+		rawCfgPath = os.Getenv("SYMPHONY_GO_CONFIG")
+	}
 	absRepo, _ := filepath.Abs(cfg.Repo.LocalPath)
 	var absCfg string
-	if rawCfgEnv != "" {
-		absCfg, _ = filepath.Abs(rawCfgEnv)
+	if rawCfgPath != "" {
+		absCfg, _ = filepath.Abs(rawCfgPath)
 	}
 	if absCfg != "" && absRepo != "" {
 		if pathInside(absCfg, absRepo) {
-			errs = append(errs, fmt.Errorf("doctor: SYMPHONY_GO_CONFIG %q is under repo.local_path %q", absCfg, absRepo))
+			errs = append(errs, fmt.Errorf("doctor: config path %q is under repo.local_path %q", absCfg, absRepo))
 		}
 	}
 
