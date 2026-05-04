@@ -1,9 +1,35 @@
 # symphony-go
 
-A small Go orchestrator that drives Codex or Claude Code on GitHub issues
-labeled `symphony:ready`, posts a plan, decides approval (rules + reviewer
-agent + post-impl diff verification, or human, or none), implements,
-validates, and opens a draft PR.
+> One Go binary that drives Claude Code or OpenAI Codex through
+> **plan → approve → implement → validate → draft PR** for any GitHub
+> issue labeled `symphony:ready`. You review the PR and merge.
+
+## Why
+
+Coding agents are fast, but you don't want them unattended on your repo.
+symphony-go wraps a coding agent so it can:
+
+- pick up GitHub issues at its own cadence — no babysitting
+- post a `## Plan` comment before touching any code
+- be gated per issue label by a human, a rules+reviewer pipeline, or
+  no gate at all
+- never push to your default branch — PRs are always draft, a human
+  marks them ready
+- restart cleanly after a crash via a 19-row reconcile table (no DB)
+
+The default `auto` mode puts **three independent gates** between the
+agent's plan and the PR: a deny-by-default rules engine, a separate
+reviewer model running read-only, and a post-implementation diff
+verifier that compares the actual diff against the plan's claimed
+scope. No single LLM call decides whether code ships.
+
+Local-first: one Go binary, no SaaS, no database. The agent runs as a
+subprocess in an isolated `$HOME` and never receives a GitHub token —
+the orchestrator owns every label transition, comment, and PR creation
+itself.
+
+A security-first profile of OpenAI Symphony — same architecture,
+tighter trust model, GitHub-Issues-native instead of Linear.
 
 See [`SPEC.md`](./SPEC.md) for the full design and
 [`docs/M6-real-runner-smoke.md`](docs/M6-real-runner-smoke.md) for the
