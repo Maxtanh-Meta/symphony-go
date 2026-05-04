@@ -243,20 +243,28 @@ func TestSameIssueClaimedOnce(t *testing.T) {
 	var wg sync.WaitGroup
 	var firstErr, secondErr error
 	wg.Add(2)
-	started := make(chan struct{})
 	go func() {
 		defer wg.Done()
-		<-started
 		firstErr = o.ProcessIssue(ctx, iss)
 	}()
+	// Wait deterministically for the first goroutine to reach the runner
+	// (i.e. it has already claimed and started planning). Polling
+	// Calls() is safe — it's mutex-protected. A fixed sleep was racy
+	// under CI load.
+	for {
+		if len(h.runner.Calls()) >= 1 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("first goroutine never reached the runner")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
 	go func() {
 		defer wg.Done()
-		<-started
-		// Tiny sleep so the first goroutine wins the claim.
-		time.Sleep(50 * time.Millisecond)
 		secondErr = o.ProcessIssue(ctx, iss)
 	}()
-	close(started)
 
 	// Release planning + implementation runner blocks in the background.
 	releaserDone := make(chan struct{})
