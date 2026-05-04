@@ -40,8 +40,10 @@ const planSuffix = `
 ---
 
 You are in PLANNING phase. Do not edit any files. Produce a written plan
-ending with the following EXACT block — the orchestrator parses it and
-will reject your plan otherwise:
+in English. Your final lines must be the following EXACT raw YAML block.
+Do not translate, rename, bold, bullet-list, fence, summarize, or paraphrase
+this block. The heading must be exactly ## Scope on its own line. The
+orchestrator parses this block and will reject your plan otherwise:
 
 ## Scope
 files_touched:
@@ -51,8 +53,8 @@ estimated_lines_added: <int>
 estimated_lines_removed: <int>
 risk_summary: <one-line note>
 
-If you fail to emit this block, the run aborts. Be conservative: list every
-file you will modify.`
+If you fail to emit this exact block, the run aborts. Be conservative: list
+every file you will modify.`
 
 // implSuffix is appended to the rendered WORKFLOW.md prompt for the
 // implementation phase, with the approved plan quoted in.
