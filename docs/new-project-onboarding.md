@@ -25,7 +25,7 @@ Before touching credentials, decide these knobs:
 | Config location | `~/.symphony-go/config.yml` or a symlink to a private platform repo |
 | First approval mode | `handoff` for the first trivial smoke, then `gated` / `auto` |
 | Agent provider | `claude` for code/docs; `codex` for image/mockup axes |
-| Merge policy | Draft PR only; human merges in GitHub or a trusted Telegram bridge |
+| Merge policy | Draft PR only; human merges in GitHub or an optional trusted chat bridge |
 
 Do not put `config.yml` inside the target repo. The agent can edit its
 workspace; config controls its permissions and must live outside that
@@ -145,6 +145,7 @@ labels:
 approval:
   mode: "handoff"
   command: "/symphony approve"
+  require_token: false
   require_write_permission: true
   ignored_users:
     - "symphony-go[bot]"
@@ -165,22 +166,42 @@ For multi-axis repos, use `workflow_files`, `mode_by_label`,
 `provider_by_label`, `model_by_label`, and per-label validation. See
 [`docs/per-axis-config.md`](./per-axis-config.md).
 
-### Trusted approval bridges
+### Approval comments and trusted bridges
 
-If another service authenticates the human operator and then posts
-`/symphony approve` through its own GitHub App, add that bot login to
+By default, gated approval is the static slash command in
+`approval.command`. You can make gated approval require a per-plan
+numeric token instead:
+
+```yaml
+approval:
+  mode: "gated"
+  command: "/symphony approve"
+  require_token: true
+  require_write_permission: true
+```
+
+With `require_token: true`, symphony-go appends an `## Approval` footer
+to the plan comment. The approver must comment exactly that number. The
+token changes whenever planning re-runs, so a stale approval cannot
+promote a fresh plan. Existing awaiting jobs without a saved token still
+fall back to `approval.command` for compatibility.
+
+If another service authenticates the human operator and then posts the
+approval comment through its own GitHub App, add that bot login to
 `approval.trusted_users`:
 
 ```yaml
 approval:
   command: "/symphony approve"
+  require_token: true
   require_write_permission: true
   trusted_users:
     - "my-chief-of-staff[bot]"
 ```
 
 Only use this for a bridge that enforces its own operator allowlist. Do
-not add the symphony-go bot itself to `trusted_users`.
+not add the symphony-go bot itself to `trusted_users`. In token mode,
+the bridge must post the current plan token, not `/symphony approve`.
 
 ## 5. Add the workflow prompt
 
@@ -267,6 +288,7 @@ Change config:
 approval:
   mode: "gated"
   command: "/symphony approve"
+  require_token: false
   require_write_permission: true
 ```
 
@@ -281,6 +303,26 @@ gh -R "$REPO" issue comment <issue-number> --body "/symphony approve"
 
 Run or keep the daemon running. Expected result: implementation resumes
 and opens a draft PR.
+
+To smoke the stronger read-the-plan gate, enable token mode:
+
+```yaml
+approval:
+  mode: "gated"
+  command: "/symphony approve"
+  require_token: true
+  require_write_permission: true
+```
+
+Create another tiny issue. The plan comment should include an
+`## Approval` footer with a 4-digit token. Comment exactly that token
+from a write-permission account:
+
+```sh
+gh -R "$REPO" issue comment <issue-number> --body "7392"
+```
+
+Use the real token from the plan comment, not the example above.
 
 Also test rejection:
 
@@ -298,6 +340,7 @@ Use `auto` only after handoff and gated paths work:
 approval:
   mode: "auto"
   command: "/symphony approve"
+  require_token: false
   require_write_permission: true
 
 auto:
@@ -327,10 +370,14 @@ If any stage rejects, the issue should fall back to
 `symphony:awaiting-approval` or `symphony:blocked`, depending on the
 configured fallback and error.
 
-## 10. Optional: Telegram or chat bridge
+## 10. Optional: chat bridge
 
-symphony-go does not require Telegram. A chat bridge is a separate
-service that:
+symphony-go does not require Telegram, Google Chat, Slack, or any other
+chat product. Chat is an optional convenience layer. Use the platform
+your company already uses; the same bridge shape works for Telegram,
+Google Chat, Slack, Teams, or an internal dashboard.
+
+A chat bridge is a separate service that:
 
 1. Receives GitHub webhooks for issue comments and draft PRs.
 2. Sends operator buttons to chat.
@@ -341,7 +388,7 @@ Minimum bridge callbacks:
 
 | Button | GitHub action |
 |---|---|
-| Approve | Comment `/symphony approve` on the issue |
+| Approve | Comment the required approval string on the issue: `/symphony approve` when `require_token: false`, or the current plan token when `require_token: true` |
 | Reject | Add `symphony:stop` and comment the rejection reason |
 | Merge | Mark draft PR ready if needed, then merge |
 | Close | Close PR |
@@ -352,10 +399,15 @@ under `approval.trusted_users` as described above.
 Smoke the bridge with real buttons:
 
 1. Gated issue reaches `symphony:awaiting-approval`.
-2. Approve button posts `/symphony approve`.
+2. Approve button posts the current approval string.
 3. symphony-go accepts the approval and opens a draft PR.
 4. Reject button moves a separate test issue to `symphony:blocked`.
 5. Merge button merges the draft PR.
+
+For Google Chat specifically, implement cards with buttons that call
+your bridge webhook. The webhook should verify the Google Workspace user
+or group, then perform the GitHub action. If token mode is enabled, show
+the token in the card and have the Approve action post that token.
 
 ## 11. Run continuously
 
@@ -392,6 +444,8 @@ Use this before declaring the project onboarded:
 - [ ] Workflow prompt files exist on `main`.
 - [ ] Handoff smoke opened a draft PR.
 - [ ] Gated approval smoke paused, then resumed after approval.
+- [ ] Token approval smoke paused, then resumed after commenting the
+      current plan token, if `approval.require_token` is enabled.
 - [ ] Stop/reject path marks an issue blocked.
 - [ ] Auto mode smoke passed rules, reviewer, and diff verification, if
       auto mode is enabled.

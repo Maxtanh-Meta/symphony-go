@@ -34,6 +34,7 @@ labels:
 approval:
   mode: "auto"                        # gated | auto | handoff
   command: "/symphony approve"
+  require_token: false                # true = gated approvals use per-plan numeric token instead of command
   require_write_permission: true
 
 auto:
