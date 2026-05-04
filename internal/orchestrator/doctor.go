@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 
 	gh "github.com/logosc/symphony-go/internal/github"
 
@@ -274,10 +273,14 @@ func codexByLabelMaps(cfg *config.Config) map[string]config.OrderedMap[[]string]
 func doctorResolveGitHubAuth(ctx context.Context, cfg *config.Config) (gh.Client, string, error) {
 	switch cfg.GitHub.Auth {
 	case "", "pat":
-		summary := fmt.Sprintf("github auth: pat (token_env=%s)", cfg.GitHub.TokenEnv)
-		token := os.Getenv(cfg.GitHub.TokenEnv)
-		if token == "" {
-			return nil, summary, fmt.Errorf("env %s is empty", cfg.GitHub.TokenEnv)
+		source := "token_env=" + cfg.GitHub.TokenEnv
+		if cfg.GitHub.Token != "" {
+			source = "token=<inline>"
+		}
+		summary := fmt.Sprintf("github auth: pat (%s)", source)
+		token, err := cfg.GitHub.ResolveToken()
+		if err != nil {
+			return nil, summary, err
 		}
 		cli, err := gh.NewClient(ctx, token, cfg.Repo.FullName)
 		if err != nil {
@@ -285,20 +288,24 @@ func doctorResolveGitHubAuth(ctx context.Context, cfg *config.Config) (gh.Client
 		}
 		return cli, summary, nil
 	case "app":
-		appID, err := strconv.ParseInt(os.Getenv(cfg.GitHub.AppIDEnv), 10, 64)
-		if err != nil || appID <= 0 {
-			return nil, "github auth: app (app_id env not parseable)",
-				fmt.Errorf("github.app_id_env %q is not a positive int64 (raw=%q)", cfg.GitHub.AppIDEnv, os.Getenv(cfg.GitHub.AppIDEnv))
+		appID, err := cfg.GitHub.ResolveAppID()
+		if err != nil {
+			return nil, "github auth: app (app_id not resolved)", err
 		}
-		instID, err := strconv.ParseInt(os.Getenv(cfg.GitHub.InstallationIDEnv), 10, 64)
-		if err != nil || instID <= 0 {
-			return nil, fmt.Sprintf("github auth: app (app_id=%d, installation_id env not parseable)", appID),
-				fmt.Errorf("github.installation_id_env %q is not a positive int64 (raw=%q)", cfg.GitHub.InstallationIDEnv, os.Getenv(cfg.GitHub.InstallationIDEnv))
+		instID, err := cfg.GitHub.ResolveInstallationID()
+		if err != nil {
+			return nil, fmt.Sprintf("github auth: app (app_id=%d, installation_id not resolved)", appID), err
 		}
 		summary := fmt.Sprintf("github auth: app (app_id=%d, installation_id=%d)", appID, instID)
-		pemBytes, err := doctorLoadAppPEM(cfg.GitHub)
+		pemBytes, pemPath, err := cfg.GitHub.ResolvePrivateKey()
 		if err != nil {
 			return nil, summary, err
+		}
+		if pemPath != "" && pemPath[0] != '<' {
+			if info, statErr := os.Stat(pemPath); statErr == nil && info.Mode().Perm()&0o077 != 0 {
+				slog.Warn("doctor: github app pem file is group/world-readable; recommend chmod 600",
+					"path", pemPath, "mode", fmt.Sprintf("%#o", info.Mode().Perm()))
+			}
 		}
 		cli, _, err := gh.NewAppClient(ctx, gh.AppAuth{
 			AppID:          appID,
@@ -312,34 +319,6 @@ func doctorResolveGitHubAuth(ctx context.Context, cfg *config.Config) (gh.Client
 	default:
 		return nil, "", fmt.Errorf("unknown github.auth %q", cfg.GitHub.Auth)
 	}
-}
-
-// doctorLoadAppPEM resolves PEM bytes from one of the two env
-// indirections; warns on broad file mode (>0600).
-func doctorLoadAppPEM(c config.GitHubConfig) ([]byte, error) {
-	if c.PrivateKeyPathEnv != "" {
-		path := os.Getenv(c.PrivateKeyPathEnv)
-		if path == "" {
-			return nil, fmt.Errorf("github.private_key_path_env %q is empty", c.PrivateKeyPathEnv)
-		}
-		if info, err := os.Stat(path); err == nil && info.Mode().Perm()&0o077 != 0 {
-			slog.Warn("doctor: github app pem file is group/world-readable; recommend chmod 600",
-				"path", path, "mode", fmt.Sprintf("%#o", info.Mode().Perm()))
-		}
-		body, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("read %q: %w", path, err)
-		}
-		return body, nil
-	}
-	if c.PrivateKeyPEMEnv != "" {
-		raw := os.Getenv(c.PrivateKeyPEMEnv)
-		if raw == "" {
-			return nil, fmt.Errorf("github.private_key_pem_env %q is empty", c.PrivateKeyPEMEnv)
-		}
-		return []byte(raw), nil
-	}
-	return nil, fmt.Errorf("neither private_key_path_env nor private_key_pem_env is configured")
 }
 
 // pathInside is local to avoid an import cycle with config; it mirrors

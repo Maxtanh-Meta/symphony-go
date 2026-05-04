@@ -60,20 +60,27 @@ select repositories** → choose the sandbox repo you want symphony-go
 to drive. After install, the URL ends in `…/installations/<N>`. Copy
 that `<N>` — that's your installation ID.
 
-## 4. Set the env vars
+## 4. Edit `~/.symphony-go/config.yml`
 
-```sh
-# In your shell profile (.zshrc, .bash_profile, etc.):
-export SYMPHONY_GO_APP_ID="3587670"            # from §3
-export SYMPHONY_GO_APP_INSTALLATION_ID="129186370"   # from §3
-export SYMPHONY_GO_APP_PRIVATE_KEY_PATH="$HOME/.symphony-go/github-app.pem"
+Two equivalent ways to wire credentials. Pick whichever fits your
+environment.
+
+### Option A — inline (recommended for single-machine ops)
+
+```yaml
+github:
+  auth: "app"
+  app_id: 3587670                         # from §3 (publicly visible — not a secret)
+  installation_id: 129186370              # from §3 (publicly visible — not a secret)
+  private_key_path: "/Users/you/.symphony-go/github-app.pem"
+  poll_interval_seconds: 30
 ```
 
-Reload your shell.
+No env vars needed. Make sure `~/.symphony-go/config.yml` itself is
+`chmod 600` if it sits next to the `.pem`. The actual secret is the
+`.pem` file; the path and ID numbers are not.
 
-## 5. Edit `~/.symphony-go/config.yml`
-
-Switch the `github:` block to App mode:
+### Option B — env-var indirection (recommended for shared infra / CI)
 
 ```yaml
 github:
@@ -85,25 +92,46 @@ github:
 ```
 
 The fields are env-var **names**, not values — symphony-go reads the
-named env at startup. This keeps secrets out of `config.yml` (which is
-plaintext).
+named env at startup. Useful when the config file is checked in or
+shared, or when secrets come from a secrets-manager.
 
-If your environment has no usable filesystem (Cloudflare Workers, some
-container images), use `private_key_pem_env` instead, with the PEM
-contents (newlines preserved) as the env value:
+```sh
+# In your shell profile, or a service EnvironmentFile:
+export SYMPHONY_GO_APP_ID="3587670"
+export SYMPHONY_GO_APP_INSTALLATION_ID="129186370"
+export SYMPHONY_GO_APP_PRIVATE_KEY_PATH="$HOME/.symphony-go/github-app.pem"
+```
+
+### Option C — inline PEM (for filesystem-less environments)
+
+If you have no usable filesystem (Cloudflare Workers, some container
+images), embed the PEM directly:
 
 ```yaml
 github:
   auth: "app"
-  app_id_env:            "SYMPHONY_GO_APP_ID"
-  installation_id_env:   "SYMPHONY_GO_APP_INSTALLATION_ID"
-  private_key_pem_env:   "SYMPHONY_GO_APP_PRIVATE_KEY_PEM"
+  app_id: 3587670
+  installation_id: 129186370
+  private_key_pem: |
+    -----BEGIN RSA PRIVATE KEY-----
+    ...
+    -----END RSA PRIVATE KEY-----
 ```
 
-`private_key_path_env` and `private_key_pem_env` are mutually exclusive
-— `symphony-go doctor` rejects configs that set both.
+Or via env: `private_key_pem_env: "SYMPHONY_GO_APP_PRIVATE_KEY_PEM"`.
 
-## 6. Verify
+### Mutual exclusion
+
+Within each pair, set exactly one — `symphony-go doctor` rejects
+configs that set both (e.g. `app_id` and `app_id_env`). Across the four
+PEM sources (`private_key_path` / `private_key_path_env` /
+`private_key_pem` / `private_key_pem_env`), exactly one must be set.
+
+You can mix-and-match across pairs: e.g. inline `app_id` with env-named
+`private_key_path_env` is fine — useful when the App ID is fixed but
+the PEM path differs by environment.
+
+## 5. Verify
 
 ```sh
 symphony-go doctor --config ~/.symphony-go/config.yml
@@ -128,7 +156,7 @@ failures:
 | `list ready issues (is App installed on owner/repo?): 404` | The App is created but not installed on this specific repo. |
 | `ghinstallation token request failed: 401 Bad credentials` | App ID and PEM don't match (different App), or the PEM was regenerated. |
 
-## 7. Run
+## 6. Run
 
 ```sh
 symphony-go run --once --config ~/.symphony-go/config.yml
@@ -155,6 +183,17 @@ persistent credential helper.
 
 ## Switching back to PAT
 
+Inline (single-machine):
+
+```yaml
+github:
+  auth: "pat"
+  token: "ghp_yourPAThere"
+  poll_interval_seconds: 30
+```
+
+Or env-var indirection (CI / shared infra):
+
 ```yaml
 github:
   auth: "pat"           # or omit; "" defaults to "pat"
@@ -162,4 +201,5 @@ github:
   poll_interval_seconds: 30
 ```
 
-Existing PAT users do nothing — the schema is fully backward-compatible.
+`token` and `token_env` are mutually exclusive. Existing PAT users do
+nothing — the schema is fully backward-compatible.

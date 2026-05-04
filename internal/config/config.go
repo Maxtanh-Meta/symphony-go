@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
@@ -74,25 +75,51 @@ type GitHubConfig struct {
 	// access token (back-compat default). "app" → GitHub App
 	// installation.
 	Auth string `yaml:"auth"`
-	// TokenEnv names the environment variable holding the PAT. Required
-	// in `pat` mode.
+	// Token is the literal PAT value. PAT mode only. Mutually exclusive
+	// with TokenEnv. Convenient for single-machine ops; for shared infra
+	// or anywhere the config file might be checked in, use TokenEnv
+	// instead so secrets don't sit in plaintext yaml.
+	Token string `yaml:"token"`
+	// TokenEnv names the environment variable holding the PAT. PAT mode
+	// only. Mutually exclusive with Token.
 	TokenEnv string `yaml:"token_env"`
-	// AppIDEnv names the environment variable holding the integer App ID.
-	// Required in `app` mode.
+	// AppID is the literal numeric App ID. App mode only. Mutually
+	// exclusive with AppIDEnv. App ID is publicly visible in GitHub
+	// URLs, not a secret.
+	AppID int64 `yaml:"app_id"`
+	// AppIDEnv names the environment variable holding the integer App
+	// ID. App mode only. Mutually exclusive with AppID.
 	AppIDEnv string `yaml:"app_id_env"`
+	// InstallationID is the literal numeric installation ID. App mode
+	// only. Mutually exclusive with InstallationIDEnv. Installation ID
+	// is visible in the App's installation URL, not a secret.
+	InstallationID int64 `yaml:"installation_id"`
 	// InstallationIDEnv names the environment variable holding the
-	// integer installation ID. Required in `app` mode.
+	// integer installation ID. App mode only. Mutually exclusive with
+	// InstallationID.
 	InstallationIDEnv string `yaml:"installation_id_env"`
+	// PrivateKeyPath is the literal absolute path to the App's .pem
+	// private key file. App mode only. Mutually exclusive with
+	// PrivateKeyPathEnv, PrivateKeyPEM, and PrivateKeyPEMEnv. The path
+	// itself is not a secret, only the file's contents are; ensure the
+	// file is chmod 600.
+	PrivateKeyPath string `yaml:"private_key_path"`
 	// PrivateKeyPathEnv names the environment variable holding the
-	// absolute path to the App's .pem private key file. Used in `app`
-	// mode. The file is read at startup. Mutually exclusive with
-	// PrivateKeyPEMEnv; exactly one must be set.
+	// absolute path to the App's .pem private key file. App mode only.
+	// Mutually exclusive with PrivateKeyPath, PrivateKeyPEM, and
+	// PrivateKeyPEMEnv. Exactly one of the four PEM-source fields must
+	// be set in App mode.
 	PrivateKeyPathEnv string `yaml:"private_key_path_env"`
+	// PrivateKeyPEM is the literal PEM contents inline. App mode only.
+	// Mutually exclusive with PrivateKeyPath, PrivateKeyPathEnv, and
+	// PrivateKeyPEMEnv. Storing PEM contents in a yaml file is sensitive
+	// — ensure the config file is chmod 600 and never checked in.
+	PrivateKeyPEM string `yaml:"private_key_pem"`
 	// PrivateKeyPEMEnv names the environment variable whose value is
 	// the literal PEM contents (the `-----BEGIN RSA PRIVATE KEY-----`
 	// block, newlines preserved). Escape hatch for environments
-	// without a filesystem (Cloudflare Workers etc.). Mutually
-	// exclusive with PrivateKeyPathEnv.
+	// without a filesystem (Cloudflare Workers etc.). Mutually exclusive
+	// with PrivateKeyPath, PrivateKeyPathEnv, and PrivateKeyPEM.
 	PrivateKeyPEMEnv string `yaml:"private_key_pem_env"`
 	// PollIntervalSeconds is the cadence between dispatch ticks.
 	PollIntervalSeconds int `yaml:"poll_interval_seconds"`
@@ -354,7 +381,9 @@ func applyDefaults(cfg *Config) {
 	if cfg.GitHub.Auth == "" {
 		cfg.GitHub.Auth = "pat"
 	}
-	if cfg.GitHub.TokenEnv == "" {
+	// Default TokenEnv only when no inline token was provided; otherwise
+	// validate would flag both as set.
+	if cfg.GitHub.TokenEnv == "" && cfg.GitHub.Token == "" {
 		cfg.GitHub.TokenEnv = "GITHUB_TOKEN"
 	}
 	if cfg.GitHub.PollIntervalSeconds == 0 {
@@ -487,4 +516,107 @@ func containsDollar(s string) bool {
 		}
 	}
 	return false
+}
+
+// ResolveToken returns the GitHub PAT, preferring the inline `token`
+// field over `token_env` lookup. Validate has already enforced that
+// exactly one is set; this assumes a `pat`-mode config.
+func (g GitHubConfig) ResolveToken() (string, error) {
+	if g.Token != "" {
+		return g.Token, nil
+	}
+	if g.TokenEnv == "" {
+		return "", fmt.Errorf("github: neither token nor token_env is set")
+	}
+	v := os.Getenv(g.TokenEnv)
+	if v == "" {
+		return "", fmt.Errorf("github: env %q (token_env) is empty", g.TokenEnv)
+	}
+	return v, nil
+}
+
+// ResolveAppID returns the App ID, preferring the inline `app_id` field
+// over `app_id_env`. Returns 0,err if neither resolves to a positive
+// int64.
+func (g GitHubConfig) ResolveAppID() (int64, error) {
+	if g.AppID > 0 {
+		return g.AppID, nil
+	}
+	if g.AppIDEnv == "" {
+		return 0, fmt.Errorf("github: neither app_id nor app_id_env is set")
+	}
+	raw := os.Getenv(g.AppIDEnv)
+	if raw == "" {
+		return 0, fmt.Errorf("github: env %q (app_id_env) is empty", g.AppIDEnv)
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("github: env %q (app_id_env) must parse as int64: %w", g.AppIDEnv, err)
+	}
+	if v <= 0 {
+		return 0, fmt.Errorf("github: env %q (app_id_env) must be positive, got %d", g.AppIDEnv, v)
+	}
+	return v, nil
+}
+
+// ResolveInstallationID returns the installation ID, preferring the
+// inline `installation_id` field over `installation_id_env`.
+func (g GitHubConfig) ResolveInstallationID() (int64, error) {
+	if g.InstallationID > 0 {
+		return g.InstallationID, nil
+	}
+	if g.InstallationIDEnv == "" {
+		return 0, fmt.Errorf("github: neither installation_id nor installation_id_env is set")
+	}
+	raw := os.Getenv(g.InstallationIDEnv)
+	if raw == "" {
+		return 0, fmt.Errorf("github: env %q (installation_id_env) is empty", g.InstallationIDEnv)
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("github: env %q (installation_id_env) must parse as int64: %w", g.InstallationIDEnv, err)
+	}
+	if v <= 0 {
+		return 0, fmt.Errorf("github: env %q (installation_id_env) must be positive, got %d", g.InstallationIDEnv, v)
+	}
+	return v, nil
+}
+
+// ResolvePrivateKey returns the App's PEM bytes from whichever of the
+// four sources is configured: `private_key_path` (inline path),
+// `private_key_path_env` (path via env), `private_key_pem` (inline PEM),
+// or `private_key_pem_env` (PEM via env). The second return value is a
+// human-readable source label suitable for logs (the path on disk, or
+// "<inline>" for inline PEM). Validate has already enforced exactly one
+// source is set.
+func (g GitHubConfig) ResolvePrivateKey() ([]byte, string, error) {
+	switch {
+	case g.PrivateKeyPath != "":
+		return readPEMFile(g.PrivateKeyPath)
+	case g.PrivateKeyPathEnv != "":
+		path := os.Getenv(g.PrivateKeyPathEnv)
+		if path == "" {
+			return nil, "", fmt.Errorf("github: env %q (private_key_path_env) is empty", g.PrivateKeyPathEnv)
+		}
+		return readPEMFile(path)
+	case g.PrivateKeyPEM != "":
+		return []byte(g.PrivateKeyPEM), "<inline>", nil
+	case g.PrivateKeyPEMEnv != "":
+		raw := os.Getenv(g.PrivateKeyPEMEnv)
+		if raw == "" {
+			return nil, "", fmt.Errorf("github: env %q (private_key_pem_env) is empty", g.PrivateKeyPEMEnv)
+		}
+		return []byte(raw), "<inline-env:" + g.PrivateKeyPEMEnv + ">", nil
+	}
+	return nil, "", fmt.Errorf("github: no private key source configured")
+}
+
+// readPEMFile reads a PEM file and returns its bytes plus the path as a
+// source label.
+func readPEMFile(path string) ([]byte, string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, path, fmt.Errorf("read app private key at %q: %w", path, err)
+	}
+	return body, path, nil
 }

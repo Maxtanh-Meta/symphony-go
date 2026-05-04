@@ -886,7 +886,7 @@ func TestLoadGitHubAuthModes(t *testing.T) {
   installation_id_env: "SG_INSTALL_ID"
   poll_interval_seconds: 30`,
 			wantErr:    true,
-			wantSubstr: "private_key_path_env or",
+			wantSubstr: "private_key_path",
 		},
 		{
 			name: "app with both path and pem env vars (mutex)",
@@ -917,6 +917,74 @@ func TestLoadGitHubAuthModes(t *testing.T) {
   poll_interval_seconds: 30`,
 			wantErr:    true,
 			wantSubstr: "github.auth",
+		},
+		{
+			name: "pat with inline token",
+			github: `github:
+  auth: "pat"
+  token: "ghp_inline_xyz"
+  poll_interval_seconds: 30`,
+		},
+		{
+			name: "pat with both token and token_env (mutex)",
+			github: `github:
+  auth: "pat"
+  token: "ghp_inline"
+  token_env: "GITHUB_TOKEN"
+  poll_interval_seconds: 30`,
+			wantErr:    true,
+			wantSubstr: "mutually exclusive",
+		},
+		{
+			name: "app fully inline",
+			github: `github:
+  auth: "app"
+  app_id: 12345
+  installation_id: 67890
+  private_key_path: "/tmp/app.pem"
+  poll_interval_seconds: 30`,
+		},
+		{
+			name: "app inline app_id with env installation_id",
+			github: `github:
+  auth: "app"
+  app_id: 12345
+  installation_id_env: "SG_INST"
+  private_key_path: "/tmp/app.pem"
+  poll_interval_seconds: 30`,
+		},
+		{
+			name: "app inline app_id collides with env app_id_env",
+			github: `github:
+  auth: "app"
+  app_id: 12345
+  app_id_env: "SG_APP_ID"
+  installation_id: 67890
+  private_key_path: "/tmp/app.pem"
+  poll_interval_seconds: 30`,
+			wantErr:    true,
+			wantSubstr: "app_id and github.app_id_env are mutually exclusive",
+		},
+		{
+			name: "app inline private_key_pem",
+			github: `github:
+  auth: "app"
+  app_id: 12345
+  installation_id: 67890
+  private_key_pem: "-----BEGIN RSA PRIVATE KEY-----\ninline\n-----END RSA PRIVATE KEY-----\n"
+  poll_interval_seconds: 30`,
+		},
+		{
+			name: "app pem 4-way mutex (path + path_env)",
+			github: `github:
+  auth: "app"
+  app_id: 12345
+  installation_id: 67890
+  private_key_path: "/tmp/app.pem"
+  private_key_path_env: "SG_APP_PEM"
+  poll_interval_seconds: 30`,
+			wantErr:    true,
+			wantSubstr: "mutually exclusive",
 		},
 	}
 	original := `github:

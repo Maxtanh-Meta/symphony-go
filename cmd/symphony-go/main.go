@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"syscall"
 
 	"github.com/logosc/symphony-go/internal/approval"
@@ -378,9 +377,9 @@ func anyRuleNeedsReviewer(rules []config.AutoRule) bool {
 func buildGitHubAuth(ctx context.Context, cfg *config.Config) (github.Client, func(context.Context) (string, error), string, error) {
 	switch cfg.GitHub.Auth {
 	case "", "pat":
-		token := os.Getenv(cfg.GitHub.TokenEnv)
-		if token == "" {
-			return nil, nil, "", fmt.Errorf("github token env var %q is empty (cfg.github.token_env)", cfg.GitHub.TokenEnv)
+		token, err := cfg.GitHub.ResolveToken()
+		if err != nil {
+			return nil, nil, "", err
 		}
 		cli, err := github.NewClient(ctx, token, cfg.Repo.FullName)
 		if err != nil {
@@ -388,18 +387,19 @@ func buildGitHubAuth(ctx context.Context, cfg *config.Config) (github.Client, fu
 		}
 		return cli, nil, token, nil
 	case "app":
-		appID, err := readPositiveInt64Env(cfg.GitHub.AppIDEnv, "github.app_id_env")
+		appID, err := cfg.GitHub.ResolveAppID()
 		if err != nil {
 			return nil, nil, "", err
 		}
-		instID, err := readPositiveInt64Env(cfg.GitHub.InstallationIDEnv, "github.installation_id_env")
+		instID, err := cfg.GitHub.ResolveInstallationID()
 		if err != nil {
 			return nil, nil, "", err
 		}
-		pemBytes, err := loadAppPEM(cfg.GitHub)
+		pemBytes, pemPath, err := cfg.GitHub.ResolvePrivateKey()
 		if err != nil {
 			return nil, nil, "", err
 		}
+		warnLoosePEMPerms(pemPath)
 		cli, creds, err := github.NewAppClient(ctx, github.AppAuth{
 			AppID:          appID,
 			InstallationID: instID,
@@ -414,54 +414,22 @@ func buildGitHubAuth(ctx context.Context, cfg *config.Config) (github.Client, fu
 	}
 }
 
-// readPositiveInt64Env reads a positive int64 from the named environment
-// variable. Empty, non-numeric, or non-positive values are reported with
-// the field name to make the operator-facing error specific.
-func readPositiveInt64Env(envName, fieldName string) (int64, error) {
-	raw := os.Getenv(envName)
-	if raw == "" {
-		return 0, fmt.Errorf("%s env var %q is empty", fieldName, envName)
+// warnLoosePEMPerms emits a slog warning when the PEM file at path has
+// group- or world-readable bits set. Skipped when path is the inline
+// sentinel returned by ResolvePrivateKey ("<inline>" or
+// "<inline-env:...>") since there's no file to chmod.
+func warnLoosePEMPerms(path string) {
+	if path == "" || path[0] == '<' {
+		return
 	}
-	v, err := strconv.ParseInt(raw, 10, 64)
+	info, err := os.Stat(path)
 	if err != nil {
-		return 0, fmt.Errorf("%s env var %q must parse as int64: %w", fieldName, envName, err)
+		return
 	}
-	if v <= 0 {
-		return 0, fmt.Errorf("%s env var %q must be a positive int64, got %d", fieldName, envName, v)
+	if info.Mode().Perm()&0o077 != 0 {
+		slog.Warn("github app pem file is group/world-readable; recommend chmod 600",
+			"path", path, "mode", fmt.Sprintf("%#o", info.Mode().Perm()))
 	}
-	return v, nil
-}
-
-// loadAppPEM resolves the App's PEM bytes from one of the two env
-// indirections: a path-on-disk (PrivateKeyPathEnv) or the inline PEM
-// string (PrivateKeyPEMEnv). Validate has already enforced that exactly
-// one is configured. Also warns when a PEM file's mode is broader than
-// 0600 — narrow permissions are best-practice for App keys.
-func loadAppPEM(c config.GitHubConfig) ([]byte, error) {
-	if c.PrivateKeyPathEnv != "" {
-		pemPath := os.Getenv(c.PrivateKeyPathEnv)
-		if pemPath == "" {
-			return nil, fmt.Errorf("github app private-key-path env var %q is empty (cfg.github.private_key_path_env)", c.PrivateKeyPathEnv)
-		}
-		info, statErr := os.Stat(pemPath)
-		if statErr == nil && info.Mode().Perm()&0o077 != 0 {
-			slog.Warn("github app pem file is group/world-readable; recommend chmod 600",
-				"path", pemPath, "mode", fmt.Sprintf("%#o", info.Mode().Perm()))
-		}
-		body, err := os.ReadFile(pemPath)
-		if err != nil {
-			return nil, fmt.Errorf("read app private key at %q: %w", pemPath, err)
-		}
-		return body, nil
-	}
-	if c.PrivateKeyPEMEnv != "" {
-		raw := os.Getenv(c.PrivateKeyPEMEnv)
-		if raw == "" {
-			return nil, fmt.Errorf("github app private-key-pem env var %q is empty (cfg.github.private_key_pem_env)", c.PrivateKeyPEMEnv)
-		}
-		return []byte(raw), nil
-	}
-	return nil, fmt.Errorf("github app private key: neither private_key_path_env nor private_key_pem_env is configured")
 }
 
 func resolveConfigPath(explicit string) (string, error) {

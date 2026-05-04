@@ -166,10 +166,14 @@ repo:
   workflow_file: "WORKFLOW.md"
 
 github:
+  # Inline values are simplest. App ID and installation ID are publicly
+  # visible in GitHub URLs (not secrets); the actual secret is the PEM
+  # file. For shared infra/CI, swap each line for the *_env variant
+  # (e.g. app_id_env: "MY_APP_ID") to read from a named env var instead.
   auth: "app"
-  app_id_env: "GITHUB_APP_ID"
-  installation_id_env: "GITHUB_APP_INSTALLATION_ID"
-  private_key_path_env: "GITHUB_APP_PRIVATE_KEY_PATH"
+  app_id: 1234567
+  installation_id: 12345678
+  private_key_path: "/Users/you/.symphony-go/myproject-app.pem"
   poll_interval_seconds: 30
 
 labels:

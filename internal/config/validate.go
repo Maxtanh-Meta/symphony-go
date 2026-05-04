@@ -41,25 +41,46 @@ func Validate(cfg *Config) error {
 	// github
 	switch cfg.GitHub.Auth {
 	case "", "pat":
-		if cfg.GitHub.TokenEnv == "" {
-			return fmt.Errorf("config: github.token_env is required when github.auth is %q", cfg.GitHub.Auth)
+		hasToken := cfg.GitHub.Token != ""
+		hasTokenEnv := cfg.GitHub.TokenEnv != ""
+		if hasToken && hasTokenEnv {
+			return fmt.Errorf("config: github.token and github.token_env are mutually exclusive")
+		}
+		if !hasToken && !hasTokenEnv {
+			return fmt.Errorf("config: github.token or github.token_env is required when github.auth is %q", cfg.GitHub.Auth)
 		}
 	case "app":
-		if cfg.GitHub.AppIDEnv == "" {
-			return fmt.Errorf("config: github.app_id_env is required when github.auth = \"app\"")
+		if cfg.GitHub.AppID > 0 && cfg.GitHub.AppIDEnv != "" {
+			return fmt.Errorf("config: github.app_id and github.app_id_env are mutually exclusive")
 		}
-		if cfg.GitHub.InstallationIDEnv == "" {
-			return fmt.Errorf("config: github.installation_id_env is required when github.auth = \"app\"")
+		if cfg.GitHub.AppID <= 0 && cfg.GitHub.AppIDEnv == "" {
+			return fmt.Errorf("config: github.app_id or github.app_id_env is required when github.auth = \"app\"")
 		}
-		// Exactly one of private_key_path_env / private_key_pem_env must
-		// be set.
-		hasPath := cfg.GitHub.PrivateKeyPathEnv != ""
-		hasPEM := cfg.GitHub.PrivateKeyPEMEnv != ""
-		if !hasPath && !hasPEM {
-			return fmt.Errorf("config: github.private_key_path_env or github.private_key_pem_env is required when github.auth = \"app\"")
+		if cfg.GitHub.InstallationID > 0 && cfg.GitHub.InstallationIDEnv != "" {
+			return fmt.Errorf("config: github.installation_id and github.installation_id_env are mutually exclusive")
 		}
-		if hasPath && hasPEM {
-			return fmt.Errorf("config: github.private_key_path_env and github.private_key_pem_env are mutually exclusive")
+		if cfg.GitHub.InstallationID <= 0 && cfg.GitHub.InstallationIDEnv == "" {
+			return fmt.Errorf("config: github.installation_id or github.installation_id_env is required when github.auth = \"app\"")
+		}
+		// Exactly one of the four PEM sources must be set.
+		pemSources := 0
+		if cfg.GitHub.PrivateKeyPath != "" {
+			pemSources++
+		}
+		if cfg.GitHub.PrivateKeyPathEnv != "" {
+			pemSources++
+		}
+		if cfg.GitHub.PrivateKeyPEM != "" {
+			pemSources++
+		}
+		if cfg.GitHub.PrivateKeyPEMEnv != "" {
+			pemSources++
+		}
+		if pemSources == 0 {
+			return fmt.Errorf("config: one of github.private_key_path / private_key_path_env / private_key_pem / private_key_pem_env is required when github.auth = \"app\"")
+		}
+		if pemSources > 1 {
+			return fmt.Errorf("config: github.private_key_path, private_key_path_env, private_key_pem, and private_key_pem_env are mutually exclusive (set exactly one)")
 		}
 	default:
 		return fmt.Errorf("config: github.auth %q must be one of \"\" (= pat), \"pat\", or \"app\"", cfg.GitHub.Auth)

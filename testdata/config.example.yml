@@ -8,17 +8,21 @@ repo:
   workflow_file: "WORKFLOW.md"
 
 github:
-  # auth: "pat" (default) — personal access token from token_env.
-  # Set to "app" to authenticate as a GitHub App installation; see the
-  # commented block below.
+  # Each credential field has two forms — pick whichever fits:
+  #   inline: token / app_id / installation_id / private_key_path / private_key_pem
+  #   env:    token_env / app_id_env / installation_id_env / private_key_path_env / private_key_pem_env
+  # Inline is simplest; env-named is right when the config file is shared
+  # or checked in. Within each pair, set exactly one — doctor rejects both.
+  #
+  # PAT mode (default):
   auth: "pat"
-  token_env: "GITHUB_TOKEN"
-  # GitHub App installation auth (uncomment after setting auth: "app"):
-  # app_id_env: "SYMPHONY_GO_APP_ID"
-  # installation_id_env: "SYMPHONY_GO_APP_INSTALLATION_ID"
-  # Exactly one of the next two is required when auth: "app":
-  # private_key_path_env: "SYMPHONY_GO_APP_PRIVATE_KEY_PATH"  # path to .pem
-  # private_key_pem_env:  "SYMPHONY_GO_APP_PRIVATE_KEY_PEM"   # inline PEM
+  token_env: "GITHUB_TOKEN"   # or:  token: "ghp_..."
+  #
+  # GitHub App mode (uncomment + flip auth to "app"):
+  # auth: "app"
+  # app_id: 1234567                                              # or app_id_env: "SYMPHONY_GO_APP_ID"
+  # installation_id: 12345678                                    # or installation_id_env: "SYMPHONY_GO_APP_INSTALLATION_ID"
+  # private_key_path: "/abs/path/to/app.pem"                     # or private_key_path_env / private_key_pem / private_key_pem_env
   poll_interval_seconds: 30
 
 labels:
