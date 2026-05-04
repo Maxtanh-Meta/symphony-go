@@ -139,6 +139,8 @@ GITHUB_TOKEN=ghp_... symphony-go run --config ~/.symphony-go/config.yml
 For the full end-to-end smoke walkthrough including label setup, gated
 and auto modes, and troubleshooting, see
 [`docs/M6-real-runner-smoke.md`](docs/M6-real-runner-smoke.md).
+For onboarding a brand-new project, use
+[`docs/new-project-onboarding.md`](docs/new-project-onboarding.md).
 
 ## Module path
 
