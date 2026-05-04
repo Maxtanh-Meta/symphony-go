@@ -148,15 +148,17 @@ func (o *Orchestrator) servicePendingApproval(ctx context.Context, job *types.Jo
 			o.deps.Logger.Info("approval: ignored user", "user", c.User)
 			continue
 		}
-		perm, err := o.deps.GitHub.GetCollaboratorPermission(ctx, c.User)
-		if err != nil {
-			o.deps.Logger.Warn("approval: permission lookup", "user", c.User, "err", err)
-			continue
-		}
-		if !canApprove(perm) {
-			_ = o.deps.GitHub.AddReaction(ctx, c.ID, "-1")
-			o.deps.Logger.Info("approval: rejected (no permission)", "user", c.User, "perm", perm)
-			continue
+		if !o.isTrustedApprovalUser(c.User) && cfg.Approval.RequireWritePermission {
+			perm, err := o.deps.GitHub.GetCollaboratorPermission(ctx, c.User)
+			if err != nil {
+				o.deps.Logger.Warn("approval: permission lookup", "user", c.User, "err", err)
+				continue
+			}
+			if !canApprove(perm) {
+				_ = o.deps.GitHub.AddReaction(ctx, c.ID, "-1")
+				o.deps.Logger.Info("approval: rejected (no permission)", "user", c.User, "perm", perm)
+				continue
+			}
 		}
 		// Approved.
 		job.ApprovalCommentID = c.ID
@@ -195,6 +197,22 @@ func (o *Orchestrator) isIgnoredApprovalUser(user string) bool {
 	}
 	for _, ig := range o.deps.Config.Approval.IgnoredUsers {
 		if strings.ToLower(strings.TrimSpace(ig)) == u {
+			return true
+		}
+	}
+	return false
+}
+
+// isTrustedApprovalUser reports whether a comment authored by `user`
+// can approve without a collaborator permission lookup. This is for bridge
+// apps that authenticate the human operator before posting the command.
+func (o *Orchestrator) isTrustedApprovalUser(user string) bool {
+	u := strings.ToLower(strings.TrimSpace(user))
+	if u == "" {
+		return false
+	}
+	for _, trusted := range o.deps.Config.Approval.TrustedUsers {
+		if strings.ToLower(strings.TrimSpace(trusted)) == u {
 			return true
 		}
 	}

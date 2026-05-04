@@ -122,6 +122,11 @@ type ApprovalConfig struct {
 	// `github-actions[bot]`) so a prompt-injected issue body cannot make
 	// the orchestrator's own bot self-approve when running as a GitHub App.
 	IgnoredUsers []string `yaml:"ignored_users"`
+	// TrustedUsers is a list of GitHub logins whose exact approval comments
+	// are accepted without a collaborator permission lookup. This is intended
+	// for approval bridge apps that already authenticate the human operator
+	// before posting the configured approval command.
+	TrustedUsers []string `yaml:"trusted_users"`
 	// ModeByLabel is the optional per-axis variant of Mode. When set, the
 	// orchestrator resolves an approval mode keyed by Job.AxisKey instead
 	// of Mode. Required to carry a "default" key. Mutually exclusive with

@@ -123,6 +123,33 @@ func TestApprovalBotIgnored_NonBotReadUser(t *testing.T) {
 	}
 }
 
+func TestApprovalTrustedUserBypassesPermissionLookup(t *testing.T) {
+	h := newTestHarness(t)
+	h.cfg.Approval.Mode = "gated"
+	h.cfg.Approval.RequireWritePermission = true
+	h.cfg.Approval.TrustedUsers = []string{"pmi-chief-of-staff[bot]"}
+	o := h.newOrch(t, "x", false)
+
+	implWriter(h.runner, []string{"a.txt"})
+
+	installAwaitingJob(t, h, 204)
+	h.gh.SetCollaboratorPermission("pmi-chief-of-staff[bot]", "none")
+	h.gh.SeedComment(204, types.IssueComment{
+		User: "pmi-chief-of-staff[bot]", Body: "/symphony approve", CreatedAt: time.Now().UTC(),
+	})
+
+	if err := o.PollApprovals(context.Background()); err != nil {
+		t.Fatalf("PollApprovals: %v", err)
+	}
+	job, err := h.state.Load(204)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if job.Status == types.StatusAwaitingApproval {
+		t.Fatalf("expected trusted bridge user to advance job, got %q", job.Status)
+	}
+}
+
 // TestApprovalBotIgnored_SelfUsername verifies Deps.SelfUsername filters
 // the bot's own comments even when not listed in IgnoredUsers.
 func TestApprovalBotIgnored_SelfUsername(t *testing.T) {
