@@ -21,7 +21,6 @@ import (
 	"github.com/logosc/symphony-go/internal/orchestrator"
 	"github.com/logosc/symphony-go/internal/runner"
 	"github.com/logosc/symphony-go/internal/state"
-	"github.com/logosc/symphony-go/internal/types"
 	"github.com/logosc/symphony-go/internal/workspace"
 )
 
@@ -199,7 +198,7 @@ func runCommand(args []string) int {
 	}
 
 	var reviewer *approval.Reviewer
-	if string(cfg.Approval.Mode) == string(types.ApprovalAuto) && anyRuleNeedsReviewer(cfg.Auto.Rules) {
+	if anyRuleNeedsReviewer(cfg.Auto.Rules) {
 		revAgentCfg := config.AgentConfig{
 			Provider:       cfg.Auto.Reviewer.Provider,
 			Model:          cfg.Auto.Reviewer.Model,
