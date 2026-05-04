@@ -60,6 +60,19 @@ agent:
   provider: "claude"                  # claude | codex
   model: "sonnet"
   timeout_seconds: 3600
+  # Per-axis variants of provider/model (Proposal 0001 §11 question #1).
+  # Mutually exclusive with the scalar `provider`/`model` above; uncomment
+  # one or both maps and remove the matching scalar to use them. Each map
+  # must carry a `default` key. Provider values must be `claude` or `codex`.
+  #
+  # provider_by_label:
+  #   "type:code":     "claude"
+  #   "type:research": "codex"
+  #   default:         "claude"
+  # model_by_label:
+  #   "type:code":     "sonnet"
+  #   "type:research": "gpt-5-codex"
+  #   default:         "sonnet"
 
 claude:
   max_turns: 20
@@ -109,6 +122,12 @@ hooks:
 validation:
   commands: ["go test ./..."]
   command_timeout_seconds: 900
+
+orchestrator:
+  # Cap on issues processed simultaneously. Default 1 (serial). Tune up
+  # only after confirming your runner, hooks, and disk can sustain N
+  # concurrent worktrees.
+  max_concurrent_jobs: 1
 
 audit:
   redact_patterns:

@@ -50,6 +50,8 @@ type Client interface {
 	ReplaceStateLabel(ctx context.Context, number int, remove []string, add []string) error
 	// PostIssueComment creates a comment on an issue and returns it.
 	PostIssueComment(ctx context.Context, number int, body string) (types.IssueComment, error)
+	// EditComment overwrites the body of an existing issue comment.
+	EditComment(ctx context.Context, commentID int64, body string) error
 	// GetCollaboratorPermission returns one of "admin", "maintain",
 	// "write", "read", or "none".
 	GetCollaboratorPermission(ctx context.Context, username string) (string, error)
@@ -225,6 +227,14 @@ func (r *realClient) PostIssueComment(ctx context.Context, number int, body stri
 		return types.IssueComment{}, fmt.Errorf("github: post comment on #%d: %w", number, err)
 	}
 	return normalizeComment(gc), nil
+}
+
+func (r *realClient) EditComment(ctx context.Context, commentID int64, body string) error {
+	_, _, err := r.c.Issues.EditComment(ctx, r.owner, r.repo, commentID, &gh.IssueComment{Body: gh.Ptr(body)})
+	if err != nil {
+		return fmt.Errorf("github: edit comment %d: %w", commentID, err)
+	}
+	return nil
 }
 
 func (r *realClient) GetCollaboratorPermission(ctx context.Context, username string) (string, error) {

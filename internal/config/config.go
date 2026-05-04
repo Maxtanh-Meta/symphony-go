@@ -29,6 +29,18 @@ type Config struct {
 	Hooks      HooksConfig      `yaml:"hooks"`
 	Validation ValidationConfig `yaml:"validation"`
 	Audit      AuditConfig      `yaml:"audit"`
+	// Orchestrator configures dispatch-loop knobs such as how many issues
+	// may be in-flight simultaneously. Defaults preserve the historical
+	// serial-dispatch behavior; see OrchestratorConfig.
+	Orchestrator OrchestratorConfig `yaml:"orchestrator"`
+}
+
+// OrchestratorConfig configures dispatch-loop behavior.
+type OrchestratorConfig struct {
+	// MaxConcurrentJobs caps how many issues the orchestrator processes
+	// simultaneously. Default 1 (serial; back-compat). Each in-flight job
+	// owns its own goroutine, worktree, and Job state file.
+	MaxConcurrentJobs int `yaml:"max_concurrent_jobs"`
 }
 
 // RepoConfig configures the target GitHub repository and local clone.
@@ -175,9 +187,22 @@ type ReviewerConfig struct {
 
 // AgentConfig configures the primary agent (planner + implementer).
 type AgentConfig struct {
-	Provider       string `yaml:"provider"`
-	Model          string `yaml:"model"`
-	TimeoutSeconds int    `yaml:"timeout_seconds"`
+	Provider string `yaml:"provider"`
+	// ProviderByLabel is the optional per-axis variant of Provider. When
+	// set, main.go pre-builds a runner per key and the orchestrator
+	// dispatches each job's runs to the runner matching Job.AxisKey.
+	// Required to carry a "default" key. Mutually exclusive with Provider
+	// (rejected at parse). Each value must be one of `claude` or `codex`.
+	// See Proposal 0001 §11 question #1.
+	ProviderByLabel OrderedMap[string] `yaml:"provider_by_label"`
+	Model           string             `yaml:"model"`
+	// ModelByLabel is the optional per-axis variant of Model. When set,
+	// main.go pre-builds a runner per key (paired with the per-axis
+	// provider when present). Required to carry a "default" key.
+	// Mutually exclusive with Model (rejected at parse). See Proposal
+	// 0001 §11 question #1.
+	ModelByLabel   OrderedMap[string] `yaml:"model_by_label"`
+	TimeoutSeconds int                `yaml:"timeout_seconds"`
 	// MultiTurn enables provider-driven multi-turn continuation during the
 	// implementation phase. The orchestrator only honors this when the
 	// runner reports support (currently `codex.mode == "app-server"`); for
@@ -375,6 +400,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Validation.CommandTimeoutSeconds == 0 {
 		cfg.Validation.CommandTimeoutSeconds = 900
+	}
+	if cfg.Orchestrator.MaxConcurrentJobs == 0 {
+		cfg.Orchestrator.MaxConcurrentJobs = 1
 	}
 }
 

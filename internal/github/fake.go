@@ -202,6 +202,39 @@ func (f *InMemoryFake) PostIssueComment(_ context.Context, number int, body stri
 	return c, nil
 }
 
+// EditComment implements Client. It scans every issue's comments slice
+// for one whose ID matches commentID and overwrites its Body in place.
+// Returns an error if no such comment exists.
+func (f *InMemoryFake) EditComment(_ context.Context, commentID int64, body string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for n, cs := range f.comments {
+		for i := range cs {
+			if cs[i].ID == commentID {
+				cs[i].Body = body
+				f.comments[n] = cs
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("github (fake): comment %d not found", commentID)
+}
+
+// GetComment returns the comment with the given ID. Test helper; not
+// part of Client.
+func (f *InMemoryFake) GetComment(commentID int64) (types.IssueComment, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, cs := range f.comments {
+		for _, c := range cs {
+			if c.ID == commentID {
+				return c, true
+			}
+		}
+	}
+	return types.IssueComment{}, false
+}
+
 // GetCollaboratorPermission implements Client.
 func (f *InMemoryFake) GetCollaboratorPermission(_ context.Context, username string) (string, error) {
 	f.mu.Lock()

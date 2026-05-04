@@ -261,6 +261,55 @@ func TestFake_PostAndListComments(t *testing.T) {
 	}
 }
 
+func TestFake_EditCommentHappyPath(t *testing.T) {
+	t.Parallel()
+	f := newSeededFake(t)
+	ctx := context.Background()
+	c, err := f.PostIssueComment(ctx, 1, "original")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.EditComment(ctx, c.ID, "edited"); err != nil {
+		t.Fatalf("EditComment: %v", err)
+	}
+	got, ok := f.GetComment(c.ID)
+	if !ok {
+		t.Fatalf("expected comment %d to exist", c.ID)
+	}
+	if got.Body != "edited" {
+		t.Errorf("body = %q, want %q", got.Body, "edited")
+	}
+	// Also visible via list.
+	all, err := f.ListIssueComments(ctx, 1, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, lc := range all {
+		if lc.ID == c.ID {
+			found = true
+			if lc.Body != "edited" {
+				t.Errorf("listed body = %q, want %q", lc.Body, "edited")
+			}
+		}
+	}
+	if !found {
+		t.Errorf("edited comment not present in list")
+	}
+}
+
+func TestFake_EditCommentMissing(t *testing.T) {
+	t.Parallel()
+	f := newSeededFake(t)
+	err := f.EditComment(context.Background(), 99999, "nope")
+	if err == nil {
+		t.Fatal("expected not-found error")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error = %v, want contains 'not found'", err)
+	}
+}
+
 func TestFake_ReplaceStateLabel(t *testing.T) {
 	t.Parallel()
 	f := newSeededFake(t)

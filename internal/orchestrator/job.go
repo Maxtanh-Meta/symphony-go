@@ -73,8 +73,10 @@ Approved plan:
 // handoff state (awaiting_approval in gated mode, or pr_ready / blocked /
 // failed terminal state otherwise).
 func (o *Orchestrator) ProcessIssue(ctx context.Context, issue types.Issue) error {
-	o.running[issue.Number] = struct{}{}
-	defer delete(o.running, issue.Number)
+	if !o.tryClaim(issue.Number) {
+		return nil
+	}
+	defer o.release(issue.Number)
 
 	log := o.deps.Logger.With("issue", issue.Number)
 	cfg := o.deps.Config
@@ -154,7 +156,7 @@ func (o *Orchestrator) ProcessIssue(ctx context.Context, issue types.Issue) erro
 	planPrompt := rendered + planSuffix
 
 	log.Info("planning_started", "axis_key", job.AxisKey, "axis_source", job.AxisSource)
-	planResult, err := o.deps.AgentRunner.Run(ctx, types.RunRequest{
+	planResult, err := o.runnerForJob(job).Run(ctx, types.RunRequest{
 		Issue:    issue,
 		RepoPath: layout.RepoPath,
 		HomePath: layout.HomePath,
@@ -345,7 +347,7 @@ func (o *Orchestrator) runImplementation(ctx context.Context, job *types.Job, is
 		Timeout:  time.Duration(cfg.Agent.TimeoutSeconds) * time.Second,
 		AxisKey:  job.AxisKey,
 	}
-	implResult, turnsUsed, ierr := o.runImplementationAgent(ctx, log, implReq)
+	implResult, turnsUsed, ierr := o.runImplementationAgent(ctx, log, job, implReq)
 	log.Info("implementation_completed", "success", implResult.Success, "turns", turnsUsed, "err", ierr)
 
 	if cfg.Hooks.AfterRun != "" {
@@ -467,11 +469,12 @@ func (o *Orchestrator) runImplementation(ctx context.Context, job *types.Job, is
 func (o *Orchestrator) runImplementationAgent(ctx context.Context, log interface {
 	Info(msg string, args ...any)
 	Warn(msg string, args ...any)
-}, req types.RunRequest) (types.RunResult, int, error) {
+}, job *types.Job, req types.RunRequest) (types.RunResult, int, error) {
 	cfg := o.deps.Config
+	r := o.runnerForJob(job)
 
 	if cfg.Agent.MultiTurn {
-		if mt, ok := o.deps.AgentRunner.(runner.MultiTurnRunner); ok {
+		if mt, ok := r.(runner.MultiTurnRunner); ok {
 			res, n, err := o.runMultiTurnImpl(ctx, log, mt, req)
 			if !errors.Is(err, runner.ErrMultiTurnUnsupported) {
 				return res, n, err
@@ -479,8 +482,25 @@ func (o *Orchestrator) runImplementationAgent(ctx context.Context, log interface
 			log.Info("multi_turn_unsupported_fallback")
 		}
 	}
-	res, err := o.deps.AgentRunner.Run(ctx, req)
+	res, err := r.Run(ctx, req)
 	return res, 1, err
+}
+
+// runnerForJob returns the per-axis AgentRunner when configured, falling
+// back to the global Deps.AgentRunner.
+func (o *Orchestrator) runnerForJob(job *types.Job) runner.AgentRunner {
+	if len(o.deps.AgentRunnersByAxis) == 0 {
+		return o.deps.AgentRunner
+	}
+	if job != nil {
+		if r, ok := o.deps.AgentRunnersByAxis[job.AxisKey]; ok {
+			return r
+		}
+	}
+	if r, ok := o.deps.AgentRunnersByAxis["default"]; ok {
+		return r
+	}
+	return o.deps.AgentRunner
 }
 
 // runMultiTurnImpl opens a Session against the multi-turn runner and

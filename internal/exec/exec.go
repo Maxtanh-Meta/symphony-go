@@ -117,17 +117,43 @@ var alwaysDrop = map[string]struct{}{
 	"SSH_AUTH_SOCK": {},
 }
 
+// baselineEnvNames are POSIX/identity env vars that are always passed
+// through (subject to blockPatterns and alwaysDrop) regardless of the
+// caller's explicit allowlist. They are required for normal subprocess
+// operation:
+//
+//   - PATH: child processes need it to find their own helpers.
+//   - USER, LOGNAME: macOS Keychain (where claude stores OAuth tokens)
+//     resolves the calling user from these; without them, claude reports
+//     "Not logged in · Please run /login" even with HOME pointing at the
+//     real user's home and ~/.claude.json symlinked.
+//   - LANG, LC_*, TERM: locale + terminal identity, required by some
+//     CLIs (codex, git) for correct character handling.
+//
+// These are not secrets. Operators who need to lock them down can add
+// them to env.block_patterns.
+var baselineEnvNames = []string{
+	"PATH", "USER", "LOGNAME",
+	"LANG", "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LC_NUMERIC",
+	"LC_TIME", "LC_COLLATE", "LC_MONETARY",
+	"TERM",
+}
+
 // BuildAgentEnv constructs the env passed to an agent or hook subprocess.
 // It starts from an empty env and includes only entries from baseEnv whose
-// name is in allowlist AND does not match any pattern in blockPatterns.
-// GITHUB_TOKEN, GH_TOKEN, and SSH_AUTH_SOCK are always dropped regardless
-// of allowlist. HOME, TMPDIR (=home/tmp), and CI=true are always set.
+// name is in allowlist (or baselineEnvNames) AND does not match any
+// pattern in blockPatterns. GITHUB_TOKEN, GH_TOKEN, and SSH_AUTH_SOCK are
+// always dropped regardless of allowlist. HOME, TMPDIR (=home/tmp), and
+// CI=true are always set.
 //
 // allowlist entries are matched as literal env-var names, not regexes.
 // blockPatterns are compiled as regexes; invalid patterns are skipped.
 func BuildAgentEnv(allowlist []string, blockPatterns []string, baseEnv []string, home string) []string {
-	allow := make(map[string]struct{}, len(allowlist))
+	allow := make(map[string]struct{}, len(allowlist)+len(baselineEnvNames))
 	for _, name := range allowlist {
+		allow[name] = struct{}{}
+	}
+	for _, name := range baselineEnvNames {
 		allow[name] = struct{}{}
 	}
 

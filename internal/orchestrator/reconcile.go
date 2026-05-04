@@ -235,9 +235,8 @@ func (o *Orchestrator) reconcileOne(ctx context.Context, issue types.Issue, job 
 			}
 			return o.driftBlock(ctx, issue, job, lc, fmt.Sprintf("expected exactly one PR for %s, found %d", job.Branch, len(prs)))
 		case strings.ToLower(rl.failed):
-			// Row 14: leave failed.
-			job.Status = types.StatusFailed
-			return true, o.saveJob(job)
+			// SPEC §7 row 14: crash during failure handling; leave failed, do not retry.
+			return false, nil
 		default:
 			return o.driftBlock(ctx, issue, job, lc, "local=implementing")
 		}
@@ -300,20 +299,34 @@ func capReconcileComment(s string) string {
 // interrupted (process died after claim, before posting a plan, or after
 // posting a plan but before transitioning to awaiting/implementing).
 // Reset the GitHub label `planning → ready`, drop the local job state,
-// and post a brief comment. The dispatch loop reclaims the `ready`
-// label on the next tick and runs planning fresh. Reconciliation never
-// starts an agent itself, satisfying both "re-run planning from scratch"
-// (SPEC §7) and "Reconciliation never starts an agent" (SPEC §7 rules).
+// and post a brief notification comment. The dispatch loop reclaims the
+// `ready` label on the next tick and runs planning fresh. Reconciliation
+// never starts an agent itself, satisfying both "re-run planning from
+// scratch" (SPEC §7) and "Reconciliation never starts an agent"
+// (SPEC §7 rules).
 //
-// The previous plan comment, if any, is left in place. We do not edit it
-// because the github.Client interface deliberately omits comment-edit
-// (M7 follow-up); a fresh planning run will post a new plan comment that
-// supersedes it visually.
+// If the orphaned local Job carries a non-zero PlanCommentID, we edit
+// that previous plan comment in place to mark it superseded, so a casual
+// reader of the issue thread is not misled by the stale plan body. The
+// edit is best-effort: a failure is logged at Warn and reconcile
+// continues. A fresh notification comment is posted independently.
 func (o *Orchestrator) reconcileRetryPlanning(ctx context.Context, issue types.Issue, job *types.Job) (bool, error) {
 	cfg := o.deps.Config
 	if err := o.deps.GitHub.ReplaceStateLabel(ctx, issue.Number,
 		[]string{cfg.Labels.Planning}, []string{cfg.Labels.Ready}); err != nil {
 		return false, err
+	}
+	if job.PlanCommentID != 0 {
+		supersededBody := capReconcileComment("[symphony-go reconcile] previous plan superseded; planning is being " +
+			"retried after a process interruption. The new plan will be posted " +
+			"as a separate comment.")
+		if err := o.deps.GitHub.EditComment(ctx, job.PlanCommentID, supersededBody); err != nil {
+			o.deps.Logger.Warn("reconcile: edit plan comment",
+				"issue", issue.Number, "comment_id", job.PlanCommentID, "err", err)
+		} else {
+			o.deps.Logger.Info("reconcile_action", "issue", issue.Number,
+				"action", "edit_plan_comment", "comment_id", job.PlanCommentID)
+		}
 	}
 	body := capReconcileComment("[symphony-go reconcile] planning was interrupted; resetting label to ready and retrying.")
 	if _, err := o.deps.GitHub.PostIssueComment(ctx, issue.Number, body); err != nil {

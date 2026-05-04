@@ -8,15 +8,21 @@ import (
 	"github.com/logosc/symphony-go/internal/types"
 )
 
+// drainTimeout caps how long Run waits for in-flight jobs to finish
+// after ctx is cancelled before returning anyway.
+const drainTimeout = 30 * time.Second
+
 // Run starts the orchestrator's poll loop. The loop runs reconcile once
 // up front, then on each tick:
 //
 //  1. handle stop labels
 //  2. PollApprovals (gated mode)
-//  3. dispatch up to one ready issue
+//  3. dispatch up to Config.Orchestrator.MaxConcurrentJobs ready issues
 //
-// When once is true, Run executes a single tick (after reconcile) and
-// returns. ctx cancellation cleanly exits the loop.
+// When once is true, Run executes a single tick (after reconcile), waits
+// for any goroutines it spawned to finish, and returns. ctx cancellation
+// triggers a graceful drain (bounded by drainTimeout) before Run returns
+// ctx.Err().
 func (o *Orchestrator) Run(ctx context.Context, once bool) error {
 	if err := o.Reconcile(ctx); err != nil {
 		return err
@@ -28,23 +34,46 @@ func (o *Orchestrator) Run(ctx context.Context, once bool) error {
 		if err := o.PollApprovals(ctx); err != nil {
 			o.deps.Logger.Error("tick: PollApprovals", "err", err)
 		}
+		max := o.deps.Config.Orchestrator.MaxConcurrentJobs
+		if max < 1 {
+			max = 1
+		}
+		slots := max - o.inflightCount()
+		if slots <= 0 {
+			return
+		}
 		issues, err := o.deps.GitHub.ListReadyIssues(ctx, o.deps.Config.Labels.Ready)
 		if err != nil {
 			o.deps.Logger.Error("tick: ListReadyIssues", "err", err)
 			return
 		}
 		for _, iss := range issues {
-			if _, ok := o.running[iss.Number]; ok {
+			if slots <= 0 {
+				break
+			}
+			// Pre-filter against the in-flight set so we don't fan out
+			// duplicate goroutines for the same issue. ProcessIssue
+			// re-acquires the claim atomically, so this is just an
+			// optimisation; release is idempotent.
+			o.runningMu.Lock()
+			_, busy := o.running[iss.Number]
+			o.runningMu.Unlock()
+			if busy {
 				continue
 			}
-			if err := o.ProcessIssue(ctx, iss); err != nil {
-				o.deps.Logger.Error("tick: ProcessIssue", "issue", iss.Number, "err", err)
-			}
-			break // MVP: one per tick
+			slots--
+			o.inflightWG.Add(1)
+			go func(iss types.Issue) {
+				defer o.inflightWG.Done()
+				if err := o.ProcessIssue(ctx, iss); err != nil {
+					o.deps.Logger.Error("tick: ProcessIssue", "issue", iss.Number, "err", err)
+				}
+			}(iss)
 		}
 	}
 	if once {
 		tick()
+		o.inflightWG.Wait()
 		return nil
 	}
 	interval := time.Duration(o.deps.Config.GitHub.PollIntervalSeconds) * time.Second
@@ -56,10 +85,27 @@ func (o *Orchestrator) Run(ctx context.Context, once bool) error {
 	for {
 		select {
 		case <-ctx.Done():
+			o.drainInflight()
 			return ctx.Err()
 		case <-ticker.C:
 			tick()
 		}
+	}
+}
+
+// drainInflight waits for in-flight goroutines spawned by the dispatch
+// loop to finish, bounded by drainTimeout. Logs a warning and returns if
+// the deadline elapses.
+func (o *Orchestrator) drainInflight() {
+	done := make(chan struct{})
+	go func() {
+		o.inflightWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(drainTimeout):
+		o.deps.Logger.Warn("drain: timed out waiting for in-flight jobs", "timeout", drainTimeout)
 	}
 }
 
@@ -123,9 +169,13 @@ func (o *Orchestrator) servicePendingApproval(ctx context.Context, job *types.Jo
 		}
 		layout := o.layoutForJob(job)
 		env := o.envForJob(layout)
-		o.running[job.IssueNumber] = struct{}{}
+		if !o.tryClaim(job.IssueNumber) {
+			// Another goroutine is already processing this issue; let
+			// that one finish. The next PollApprovals tick will retry.
+			return nil
+		}
 		err = o.runImplementation(ctx, job, issue, layout, env)
-		delete(o.running, job.IssueNumber)
+		o.release(job.IssueNumber)
 		return err
 	}
 	return nil

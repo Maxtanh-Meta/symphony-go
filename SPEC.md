@@ -821,6 +821,12 @@ independently once shared types are defined.
   status + PR body provenance.
 - Doctor: per-axis collision/default checks, workflow-file existence.
 
+**M8. Orchestrator concurrency > 1.**
+- `orchestrator.max_concurrent_jobs` knob (default 1, back-compat serial).
+- Per-issue claim/release via mutex-guarded helpers; dispatch spawns one
+  goroutine per claimed issue, tracked by a sync.WaitGroup.
+- Graceful drain on ctx cancellation, bounded by a 30s deadline.
+
 ---
 
 ## 16. Definition of Done
@@ -847,9 +853,12 @@ independently once shared types are defined.
 
 **Out of MVP scope, supported as opt-in:** Codex `app-server` streaming.
 
-**Deferred:** multi-turn continuation, per-state concurrency limits,
-blocker-aware dispatch, event-inactivity stall detection, dynamic config
-reload during runs.
+**Deferred:** per-state concurrency limits, blocker-aware dispatch,
+dynamic config reload during runs.
+
+**Implemented post-MVP:** multi-turn continuation (M7), orchestrator-wide
+concurrency cap (M8, see `orchestrator.max_concurrent_jobs`),
+event-inactivity stall detection.
 
 **Out of scope, by design:** Linear, web UI, TUI, multi-agent teams, MCP,
 dashboards, automatic merge, deployment, distributed workers, model

@@ -31,8 +31,14 @@ func Doctor(ctx context.Context, cfg *config.Config) error {
 	// 1, 2 happen at config load + integrity-guard construction time.
 	// Re-run the path-inside-repo check here so doctor catches it without
 	// requiring the caller to have built a guard first.
-	absCfg, _ := filepath.Abs(os.Getenv("SYMPHONY_GO_CONFIG"))
+	// NOTE: filepath.Abs("") returns the current working directory rather
+	// than the empty string, so we must guard with the raw env-var lookup.
+	rawCfgEnv := os.Getenv("SYMPHONY_GO_CONFIG")
 	absRepo, _ := filepath.Abs(cfg.Repo.LocalPath)
+	var absCfg string
+	if rawCfgEnv != "" {
+		absCfg, _ = filepath.Abs(rawCfgEnv)
+	}
 	if absCfg != "" && absRepo != "" {
 		if pathInside(absCfg, absRepo) {
 			errs = append(errs, fmt.Errorf("doctor: SYMPHONY_GO_CONFIG %q is under repo.local_path %q", absCfg, absRepo))

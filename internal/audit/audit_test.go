@@ -272,6 +272,76 @@ func TestHandler_WithAttrsAndGroup(t *testing.T) {
 	}
 }
 
+func TestHandlerRedactsDeeplyNestedAttrs(t *testing.T) {
+	dir := t.TempDir()
+	patterns := []string{`ghp_[A-Za-z0-9_]+`}
+	h := New(dir, patterns, nil)
+	defer h.Close()
+	logger := slog.New(h)
+
+	logger.LogAttrs(context.Background(), slog.LevelInfo, "evt",
+		slog.Int("issue", 13),
+		slog.Group("outer",
+			slog.Group("middle",
+				slog.Group("inner",
+					slog.String("token", "ghp_secret123"),
+				),
+			),
+		),
+	)
+
+	if err := h.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "13.jsonl"))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	line := string(data)
+	if !strings.Contains(line, "[REDACTED]") {
+		t.Errorf("expected [REDACTED] marker, got: %s", line)
+	}
+	if strings.Contains(line, "ghp_secret123") {
+		t.Errorf("raw secret leaked at depth 3: %s", line)
+	}
+}
+
+// secretLogValuer is a slog.LogValuer whose log form contains a string
+// attr that should be redacted by the audit handler.
+type secretLogValuer struct{ token string }
+
+func (s secretLogValuer) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("token", s.token))
+}
+
+func TestHandlerRedactsLogValuer(t *testing.T) {
+	dir := t.TempDir()
+	patterns := []string{`ghp_[A-Za-z0-9_]+`}
+	h := New(dir, patterns, nil)
+	defer h.Close()
+	logger := slog.New(h)
+
+	logger.LogAttrs(context.Background(), slog.LevelInfo, "evt",
+		slog.Int("issue", 17),
+		slog.Any("creds", secretLogValuer{token: "ghp_lv_abc999"}),
+	)
+
+	if err := h.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "17.jsonl"))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	line := string(data)
+	if !strings.Contains(line, "[REDACTED]") {
+		t.Errorf("expected [REDACTED] marker, got: %s", line)
+	}
+	if strings.Contains(line, "ghp_lv_abc999") {
+		t.Errorf("LogValuer string not redacted: %s", line)
+	}
+}
+
 // Sanity: the package compiles against a generic io.Writer-backed
 // delegate — guards against accidental tight coupling.
 var _ io.Writer = (*bytes.Buffer)(nil)

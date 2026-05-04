@@ -162,10 +162,35 @@ func Validate(cfg *Config) error {
 	}
 
 	// agent
-	switch cfg.Agent.Provider {
-	case "claude", "codex":
-	default:
-		return fmt.Errorf("config: agent.provider %q must be claude|codex", cfg.Agent.Provider)
+	// Per-axis collisions: scalar Provider/Model and their _by_label maps
+	// must not both be set. Mirrors the workflow_files / commands_by_label
+	// pattern. See Proposal 0001 §11 question #1.
+	if cfg.Agent.Provider != "" && !cfg.Agent.ProviderByLabel.IsEmpty() {
+		return fmt.Errorf("config: agent.provider and agent.provider_by_label are mutually exclusive")
+	}
+	if !cfg.Agent.ProviderByLabel.IsEmpty() {
+		if !cfg.Agent.ProviderByLabel.HasDefault() {
+			return fmt.Errorf("config: agent.provider_by_label must contain a \"default\" key")
+		}
+		for k, v := range cfg.Agent.ProviderByLabel.Values {
+			switch v {
+			case "claude", "codex":
+			default:
+				return fmt.Errorf("config: agent.provider_by_label[%q] %q must be claude|codex", k, v)
+			}
+		}
+	} else {
+		switch cfg.Agent.Provider {
+		case "claude", "codex":
+		default:
+			return fmt.Errorf("config: agent.provider %q must be claude|codex", cfg.Agent.Provider)
+		}
+	}
+	if cfg.Agent.Model != "" && !cfg.Agent.ModelByLabel.IsEmpty() {
+		return fmt.Errorf("config: agent.model and agent.model_by_label are mutually exclusive")
+	}
+	if !cfg.Agent.ModelByLabel.IsEmpty() && !cfg.Agent.ModelByLabel.HasDefault() {
+		return fmt.Errorf("config: agent.model_by_label must contain a \"default\" key")
 	}
 	if cfg.Agent.TimeoutSeconds <= 0 {
 		return fmt.Errorf("config: agent.timeout_seconds must be > 0")
@@ -217,6 +242,11 @@ func Validate(cfg *Config) error {
 	}
 	if !cfg.Validation.CommandsByLabel.IsEmpty() && !cfg.Validation.CommandsByLabel.HasDefault() {
 		return fmt.Errorf("config: validation.commands_by_label must contain a \"default\" key")
+	}
+
+	// orchestrator
+	if cfg.Orchestrator.MaxConcurrentJobs < 1 {
+		return fmt.Errorf("config: orchestrator.max_concurrent_jobs must be >= 1")
 	}
 
 	// audit redact patterns must compile

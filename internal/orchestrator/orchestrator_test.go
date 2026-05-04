@@ -614,6 +614,101 @@ func TestPerAxisWorkflowAndValidation(t *testing.T) {
 	}
 }
 
+// TestPerAxisAgentRunners verifies G19 wiring: with two issues carrying
+// different type:* labels and Deps.AgentRunnersByAxis populated with
+// distinct fakes per axis, each issue's RunRequests reach only the
+// runner registered for that axis. See Proposal 0001 §11 question #1.
+func TestPerAxisAgentRunners(t *testing.T) {
+	h := newTestHarness(t)
+	h.cfg.Approval.Mode = "handoff"
+	// Mark per-axis mode by setting WorkflowFiles (the canonical axis
+	// anchor used by resolveAxis). Empty scalar workflow_file.
+	h.cfg.Repo.WorkflowFile = ""
+	h.cfg.Repo.WorkflowFiles = config.OrderedMap[string]{
+		Keys: []string{"type:code", "type:research", "default"},
+		Values: map[string]string{
+			"type:code":     "code-axis",
+			"type:research": "research-axis",
+			"default":       "code-axis",
+		},
+	}
+
+	codeRunner := runner.NewFakeRunner()
+	researchRunner := runner.NewFakeRunner()
+	for _, r := range []*runner.FakeRunner{codeRunner, researchRunner} {
+		r.Responses[types.PhasePlanning] = types.RunResult{Success: true, Text: canonicalPlan([]string{"a.txt"})}
+		implWriter(r, []string{"a.txt"})
+	}
+
+	deps := Deps{
+		Config:       h.cfg,
+		GitHub:       h.gh,
+		State:        h.state,
+		WorkspaceMgr: h.mgr,
+		// Default AgentRunner unused when a matching axis runner exists,
+		// but New() requires it to be non-nil. Use a third fake so a
+		// stray call would be visible.
+		AgentRunner: runner.NewFakeRunner(),
+		AgentRunnersByAxis: map[string]runner.AgentRunner{
+			"type:code":     codeRunner,
+			"type:research": researchRunner,
+			"default":       codeRunner,
+		},
+		PromptTemplates: map[string]string{
+			"type:code":     "PROMPT-CODE: {{ issue.title }}",
+			"type:research": "PROMPT-RESEARCH: {{ issue.title }}",
+			"default":       "PROMPT-CODE: {{ issue.title }}",
+		},
+		PushFunc:      h.pushToBare,
+		WorkspaceRoot: h.wsRoot,
+		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	o, err := New(deps)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	codeIss := h.seedReadyIssue(201, "code work", "type:code")
+	researchIss := h.seedReadyIssue(202, "research work", "type:research")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := o.ProcessIssue(ctx, codeIss); err != nil {
+		t.Fatalf("ProcessIssue(code): %v", err)
+	}
+	if err := o.ProcessIssue(ctx, researchIss); err != nil {
+		t.Fatalf("ProcessIssue(research): %v", err)
+	}
+
+	// Each per-axis runner saw exactly its axis's issue and no other.
+	for _, c := range codeRunner.Calls() {
+		if c.Issue.Number != 201 {
+			t.Errorf("codeRunner saw issue %d; want 201 only", c.Issue.Number)
+		}
+		if c.AxisKey != "type:code" {
+			t.Errorf("codeRunner call AxisKey = %q; want type:code", c.AxisKey)
+		}
+	}
+	if len(codeRunner.Calls()) == 0 {
+		t.Errorf("codeRunner saw no calls")
+	}
+	for _, c := range researchRunner.Calls() {
+		if c.Issue.Number != 202 {
+			t.Errorf("researchRunner saw issue %d; want 202 only", c.Issue.Number)
+		}
+		if c.AxisKey != "type:research" {
+			t.Errorf("researchRunner call AxisKey = %q; want type:research", c.AxisKey)
+		}
+	}
+	if len(researchRunner.Calls()) == 0 {
+		t.Errorf("researchRunner saw no calls")
+	}
+	// The fallback (Deps.AgentRunner) must NOT have been hit.
+	if fallback := deps.AgentRunner.(*runner.FakeRunner); len(fallback.Calls()) != 0 {
+		t.Errorf("default AgentRunner unexpectedly called %d times", len(fallback.Calls()))
+	}
+}
+
 // TestRunOnce dispatches one issue via Run(once=true).
 func TestRunOnce(t *testing.T) {
 	h := newTestHarness(t)

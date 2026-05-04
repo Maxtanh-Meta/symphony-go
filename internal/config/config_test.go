@@ -164,6 +164,44 @@ agent:
 	if cfg.Validation.CommandTimeoutSeconds != 900 {
 		t.Errorf("default validation timeout: got %d", cfg.Validation.CommandTimeoutSeconds)
 	}
+	if cfg.Orchestrator.MaxConcurrentJobs != 1 {
+		t.Errorf("default orchestrator.max_concurrent_jobs: got %d", cfg.Orchestrator.MaxConcurrentJobs)
+	}
+}
+
+// TestValidateMaxConcurrentJobsZero asserts Validate rejects an explicit
+// zero or negative MaxConcurrentJobs (bypassing applyDefaults).
+func TestValidateMaxConcurrentJobsZero(t *testing.T) {
+	mk := func(n int) *Config {
+		return &Config{
+			Repo:   RepoConfig{FullName: "O/R", BaseBranch: "main", LocalPath: "/tmp/x", WorkflowFile: "WORKFLOW.md"},
+			GitHub: GitHubConfig{Auth: "pat", TokenEnv: "GITHUB_TOKEN", PollIntervalSeconds: 30},
+			Labels: LabelsConfig{
+				Ready: "r", Planning: "p", AwaitingApproval: "aa", Implementing: "i",
+				PRReady: "pr", Failed: "f", Blocked: "b", Stop: "s",
+			},
+			Approval:     ApprovalConfig{Mode: "gated", Command: "/x"},
+			Auto:         AutoConfig{FallbackOnReject: "gated", FallbackOnNoRuleMatch: "gated"},
+			Agent:        AgentConfig{Provider: "claude", TimeoutSeconds: 60},
+			Codex:        CodexConfig{Mode: "exec"},
+			Hooks:        HooksConfig{TimeoutSeconds: 30},
+			Validation:   ValidationConfig{CommandTimeoutSeconds: 60},
+			Orchestrator: OrchestratorConfig{MaxConcurrentJobs: n},
+		}
+	}
+	for _, n := range []int{0, -1, -7} {
+		err := Validate(mk(n))
+		if err == nil {
+			t.Errorf("Validate(MaxConcurrentJobs=%d): expected error, got nil", n)
+			continue
+		}
+		if !strings.Contains(err.Error(), "max_concurrent_jobs") {
+			t.Errorf("Validate(MaxConcurrentJobs=%d): err = %v", n, err)
+		}
+	}
+	if err := Validate(mk(1)); err != nil {
+		t.Errorf("Validate(MaxConcurrentJobs=1): unexpected error: %v", err)
+	}
 }
 
 func TestValidateMissingFields(t *testing.T) {
@@ -210,6 +248,13 @@ func TestValidateMissingFields(t *testing.T) {
 			name:    "bad codex.mode",
 			mutate:  func(s string) string { return strings.Replace(s, `mode: "exec"`, `mode: "weird"`, 1) },
 			wantSub: "codex.mode",
+		},
+		{
+			name: "negative max_concurrent_jobs",
+			mutate: func(s string) string {
+				return s + "\norchestrator:\n  max_concurrent_jobs: -1\n"
+			},
+			wantSub: "orchestrator.max_concurrent_jobs",
 		},
 		{
 			name: "bad redact pattern",
@@ -562,6 +607,130 @@ func TestLoadApprovalModeByLabelInvalidValue(t *testing.T) {
 	_, err := Load(p)
 	if err == nil || !strings.Contains(err.Error(), "gated|auto|handoff") {
 		t.Fatalf("err = %v; want enum violation", err)
+	}
+}
+
+// TestLoadAgentProviderByLabelCollision rejects setting both scalar
+// agent.provider and agent.provider_by_label. See Proposal 0001 §11
+// question #1.
+func TestLoadAgentProviderByLabelCollision(t *testing.T) {
+	body := strings.Replace(validConfigYAML(),
+		`agent:
+  provider: "claude"
+  model: "sonnet"
+  timeout_seconds: 3600`,
+		`agent:
+  provider: "claude"
+  provider_by_label:
+    "type:code":     "claude"
+    default:         "claude"
+  model: "sonnet"
+  timeout_seconds: 3600`, 1)
+	p := writeTempConfig(t, body)
+	_, err := Load(p)
+	if err == nil || !strings.Contains(err.Error(), "agent.provider") || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("err = %v; want provider+map collision", err)
+	}
+}
+
+// TestLoadAgentModelByLabelCollision rejects scalar+map for agent.model.
+func TestLoadAgentModelByLabelCollision(t *testing.T) {
+	body := strings.Replace(validConfigYAML(),
+		`agent:
+  provider: "claude"
+  model: "sonnet"
+  timeout_seconds: 3600`,
+		`agent:
+  provider: "claude"
+  model: "sonnet"
+  model_by_label:
+    "type:code": "sonnet"
+    default:     "sonnet"
+  timeout_seconds: 3600`, 1)
+	p := writeTempConfig(t, body)
+	_, err := Load(p)
+	if err == nil || !strings.Contains(err.Error(), "agent.model") || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("err = %v; want model+map collision", err)
+	}
+}
+
+// TestLoadAgentProviderByLabelMissingDefault rejects a per-axis provider
+// map without a "default" key.
+func TestLoadAgentProviderByLabelMissingDefault(t *testing.T) {
+	body := strings.Replace(validConfigYAML(),
+		`agent:
+  provider: "claude"
+  model: "sonnet"
+  timeout_seconds: 3600`,
+		`agent:
+  provider_by_label:
+    "type:code": "claude"
+  model: "sonnet"
+  timeout_seconds: 3600`, 1)
+	p := writeTempConfig(t, body)
+	_, err := Load(p)
+	if err == nil || !strings.Contains(err.Error(), "provider_by_label") || !strings.Contains(err.Error(), "default") {
+		t.Fatalf("err = %v; want missing-default", err)
+	}
+}
+
+// TestLoadAgentModelByLabelMissingDefault rejects a per-axis model map
+// without a "default" key.
+func TestLoadAgentModelByLabelMissingDefault(t *testing.T) {
+	body := strings.Replace(validConfigYAML(),
+		`agent:
+  provider: "claude"
+  model: "sonnet"
+  timeout_seconds: 3600`,
+		`agent:
+  provider: "claude"
+  model_by_label:
+    "type:code": "sonnet"
+  timeout_seconds: 3600`, 1)
+	p := writeTempConfig(t, body)
+	_, err := Load(p)
+	if err == nil || !strings.Contains(err.Error(), "model_by_label") || !strings.Contains(err.Error(), "default") {
+		t.Fatalf("err = %v; want missing-default", err)
+	}
+}
+
+// TestLoadAgentProviderModelByLabelOnlyMap parses a fully per-axis agent
+// section (no scalar provider/model) and asserts the maps round-trip.
+func TestLoadAgentProviderModelByLabelOnlyMap(t *testing.T) {
+	body := strings.Replace(validConfigYAML(),
+		`agent:
+  provider: "claude"
+  model: "sonnet"
+  timeout_seconds: 3600`,
+		`agent:
+  provider_by_label:
+    "type:code":     "claude"
+    "type:research": "codex"
+    default:         "claude"
+  model_by_label:
+    "type:code":     "sonnet"
+    "type:research": "gpt-5-codex"
+    default:         "sonnet"
+  timeout_seconds: 3600`, 1)
+	p := writeTempConfig(t, body)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Agent.Provider != "" {
+		t.Errorf("Provider = %q; want empty (map mode)", cfg.Agent.Provider)
+	}
+	if cfg.Agent.ProviderByLabel.IsEmpty() {
+		t.Fatalf("ProviderByLabel empty")
+	}
+	if got := cfg.Agent.ProviderByLabel.Values["type:research"]; got != "codex" {
+		t.Errorf("ProviderByLabel[type:research] = %q; want codex", got)
+	}
+	if cfg.Agent.ModelByLabel.IsEmpty() {
+		t.Fatalf("ModelByLabel empty")
+	}
+	if got := cfg.Agent.ModelByLabel.Values["type:research"]; got != "gpt-5-codex" {
+		t.Errorf("ModelByLabel[type:research] = %q; want gpt-5-codex", got)
 	}
 }
 

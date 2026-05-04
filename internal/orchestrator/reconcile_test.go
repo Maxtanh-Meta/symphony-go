@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/logosc/symphony-go/internal/github"
@@ -85,11 +86,15 @@ func TestReconcileRetryPlanning(t *testing.T) {
 	iss := types.Issue{Number: 104, Title: "in-flight planning", State: "open",
 		Labels: []string{h.cfg.Labels.Planning}}
 	h.gh.SeedIssue(iss, false)
+	// Seed a prior plan comment so we can verify it gets edited in place.
+	const originalPlan = "## Plan\n- step 1\n- step 2"
+	planComment := h.gh.SeedComment(104, types.IssueComment{Body: originalPlan})
 	job := &types.Job{
-		IssueNumber: 104,
-		Repo:        h.cfg.Repo.FullName,
-		Status:      types.StatusPlanning,
-		Branch:      "symphony/issue-104-in-flight-planning",
+		IssueNumber:   104,
+		Repo:          h.cfg.Repo.FullName,
+		Status:        types.StatusPlanning,
+		Branch:        "symphony/issue-104-in-flight-planning",
+		PlanCommentID: planComment.ID,
 	}
 	if err := h.state.Save(job); err != nil {
 		t.Fatalf("save: %v", err)
@@ -105,6 +110,17 @@ func TestReconcileRetryPlanning(t *testing.T) {
 	}
 	if _, err := h.state.Load(104); err == nil {
 		t.Fatalf("expected local state deleted, got nil error")
+	}
+	// The prior plan comment should have been edited in place.
+	got, ok := h.gh.GetComment(planComment.ID)
+	if !ok {
+		t.Fatalf("expected plan comment %d to still exist", planComment.ID)
+	}
+	if got.Body == originalPlan {
+		t.Errorf("expected plan comment body edited, still original: %q", got.Body)
+	}
+	if !strings.Contains(got.Body, "superseded") {
+		t.Errorf("expected edited plan comment to mention 'superseded', got: %q", got.Body)
 	}
 }
 
@@ -364,8 +380,8 @@ func TestReconcileRow13_PRReadyZeroMatches(t *testing.T) {
 }
 
 // TestReconcileRow14_ImplementingFailedLeave: local=implementing,
-// github=failed. Crash during failure handling. Leave failed; mirror
-// local status to failed.
+// github=failed. Crash during failure handling. Per SPEC §7 row 14,
+// leave failed; do not retry; do not transition local Job.
 func TestReconcileRow14_ImplementingFailedLeave(t *testing.T) {
 	h := newTestHarness(t)
 	o := h.newOrch(t, "x", false)
@@ -386,8 +402,8 @@ func TestReconcileRow14_ImplementingFailedLeave(t *testing.T) {
 		t.Fatalf("expected failed preserved, got %v", h.labelsFor(215))
 	}
 	got, _ := h.state.Load(215)
-	if got.Status != types.StatusFailed {
-		t.Fatalf("expected local failed, got %q", got.Status)
+	if got.Status != types.StatusImplementing {
+		t.Fatalf("expected local implementing preserved, got %q", got.Status)
 	}
 }
 

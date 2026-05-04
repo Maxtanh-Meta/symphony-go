@@ -160,6 +160,23 @@ func runCommand(args []string) int {
 		return 2
 	}
 
+	// Per-axis runners (Proposal 0001 §11 question #1). When either
+	// agent.provider_by_label or agent.model_by_label is set, pre-build
+	// one runner per axis key (the union of both maps' keys, including
+	// "default") and pass them to the orchestrator. The default
+	// AgentRunner above remains as the fallback.
+	agentRunnersByAxis, err := buildAgentRunnersByAxis(cfg)
+	if err != nil {
+		slog.Error("agent runner per-axis", "err", err)
+		return 2
+	}
+	// When per-axis is configured, prefer the "default" entry as the
+	// fallback runner so a job with an empty/unknown AxisKey behaves
+	// consistently with the per-axis intent.
+	if r, ok := agentRunnersByAxis["default"]; ok {
+		agentRunner = r
+	}
+
 	var reviewer *approval.Reviewer
 	if string(cfg.Approval.Mode) == string(types.ApprovalAuto) && anyRuleNeedsReviewer(cfg.Auto.Rules) {
 		revAgentCfg := config.AgentConfig{
@@ -176,16 +193,17 @@ func runCommand(args []string) int {
 	}
 
 	orch, err := orchestrator.New(orchestrator.Deps{
-		Config:          cfg,
-		GitHub:          gh,
-		State:           store,
-		WorkspaceMgr:    wsMgr,
-		AgentRunner:     agentRunner,
-		Reviewer:        reviewer,
-		PromptTemplate:  wf,
-		PromptTemplates: wfs,
-		GitHubToken:     staticToken,
-		GitHubTokenFn:   tokenFn,
+		Config:             cfg,
+		GitHub:             gh,
+		State:              store,
+		WorkspaceMgr:       wsMgr,
+		AgentRunner:        agentRunner,
+		AgentRunnersByAxis: agentRunnersByAxis,
+		Reviewer:           reviewer,
+		PromptTemplate:     wf,
+		PromptTemplates:    wfs,
+		GitHubToken:        staticToken,
+		GitHubTokenFn:      tokenFn,
 	})
 	if err != nil {
 		slog.Error("orchestrator new", "err", err)
@@ -230,6 +248,61 @@ func doctorCommand(args []string) int {
 	}
 	fmt.Fprintln(os.Stdout, "ok")
 	return 0
+}
+
+// buildAgentRunnersByAxis pre-builds one runner per axis key when
+// agent.provider_by_label or agent.model_by_label is set. Returns nil
+// (no error) when neither is set. The union of both maps' keys is
+// walked; for each key, a synthetic AgentConfig is constructed by
+// substituting Provider/Model from the maps (falling back to the scalar
+// values when a key is missing from one of the maps).
+func buildAgentRunnersByAxis(cfg *config.Config) (map[string]runner.AgentRunner, error) {
+	pmap := cfg.Agent.ProviderByLabel
+	mmap := cfg.Agent.ModelByLabel
+	if pmap.IsEmpty() && mmap.IsEmpty() {
+		return nil, nil
+	}
+	// Union of keys, preserving declaration order from provider map first.
+	seen := make(map[string]struct{})
+	var keys []string
+	for _, k := range pmap.Keys {
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
+		keys = append(keys, k)
+	}
+	for _, k := range mmap.Keys {
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
+		keys = append(keys, k)
+	}
+	out := make(map[string]runner.AgentRunner, len(keys))
+	for _, k := range keys {
+		provider := cfg.Agent.Provider
+		if v, ok := pmap.Values[k]; ok {
+			provider = v
+		}
+		model := cfg.Agent.Model
+		if v, ok := mmap.Values[k]; ok {
+			model = v
+		}
+		synth := cfg.Agent
+		synth.Provider = provider
+		synth.Model = model
+		// Wipe the per-axis maps in the synthetic copy; they're not used
+		// by the runner constructor and would be misleading.
+		synth.ProviderByLabel = config.OrderedMap[string]{}
+		synth.ModelByLabel = config.OrderedMap[string]{}
+		r, err := buildRunner(provider, synth, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("axis %q: %w", k, err)
+		}
+		out[k] = r
+	}
+	return out, nil
 }
 
 func buildRunner(provider string, agentCfg config.AgentConfig, cfg *config.Config) (runner.AgentRunner, error) {

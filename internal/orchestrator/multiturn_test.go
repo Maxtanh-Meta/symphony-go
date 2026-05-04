@@ -105,7 +105,7 @@ func TestMultiTurn_StopsOnDoneMarker(t *testing.T) {
 	mt := &fakeMultiTurnRunner{sess: sess}
 	o := newOrchForMT(t, mt, true, 5)
 
-	res, turns, err := o.runImplementationAgent(context.Background(), o.deps.Logger, types.RunRequest{
+	res, turns, err := o.runImplementationAgent(context.Background(), o.deps.Logger, nil, types.RunRequest{
 		Phase:  types.PhaseImplementation,
 		Prompt: "INITIAL",
 	})
@@ -145,7 +145,7 @@ func TestMultiTurn_HitsMaxTurns(t *testing.T) {
 	mt := &fakeMultiTurnRunner{sess: sess}
 	o := newOrchForMT(t, mt, true, 3)
 
-	res, n, err := o.runImplementationAgent(context.Background(), o.deps.Logger, types.RunRequest{
+	res, n, err := o.runImplementationAgent(context.Background(), o.deps.Logger, nil, types.RunRequest{
 		Phase:  types.PhaseImplementation,
 		Prompt: "INITIAL",
 	})
@@ -172,7 +172,7 @@ func TestMultiTurn_FirstFailureStops(t *testing.T) {
 	mt := &fakeMultiTurnRunner{sess: sess}
 	o := newOrchForMT(t, mt, true, 5)
 
-	res, n, err := o.runImplementationAgent(context.Background(), o.deps.Logger, types.RunRequest{
+	res, n, err := o.runImplementationAgent(context.Background(), o.deps.Logger, nil, types.RunRequest{
 		Phase:  types.PhaseImplementation,
 		Prompt: "INITIAL",
 	})
@@ -208,7 +208,7 @@ func TestMultiTurn_FallsBackWhenRunnerLacksSupport(t *testing.T) {
 	or := &ordinaryRunner{res: types.RunResult{Success: true, Text: "single"}}
 	o := newOrchForMT(t, or, true, 3)
 
-	res, n, err := o.runImplementationAgent(context.Background(), o.deps.Logger, types.RunRequest{
+	res, n, err := o.runImplementationAgent(context.Background(), o.deps.Logger, nil, types.RunRequest{
 		Phase:  types.PhaseImplementation,
 		Prompt: "INITIAL",
 	})
@@ -234,7 +234,7 @@ func TestMultiTurn_DisabledByConfigRunsOnce(t *testing.T) {
 	mt := &fakeMultiTurnRunner{sess: sess}
 	o := newOrchForMT(t, mt, false /* MultiTurn off */, 5)
 
-	_, n, err := o.runImplementationAgent(context.Background(), o.deps.Logger, types.RunRequest{
+	_, n, err := o.runImplementationAgent(context.Background(), o.deps.Logger, nil, types.RunRequest{
 		Phase:  types.PhaseImplementation,
 		Prompt: "INITIAL",
 	})

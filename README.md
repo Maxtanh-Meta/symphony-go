@@ -107,4 +107,6 @@ different organization, run `go mod edit -module ...` and update imports.
 
 ## License
 
-TBD.
+[Apache License 2.0](LICENSE) — same as upstream
+[OpenAI Symphony](https://github.com/openai/symphony). Copyright © 2026
+logosc and contributors.

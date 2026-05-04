@@ -3,8 +3,10 @@
 // machine and outer poll loop described in SPEC §3, §7, §10, §11.
 //
 // External collaborators are injected via Deps so tests can swap fakes.
-// The orchestrator never spawns goroutines beyond its single Run loop and
-// processes one issue at a time (max_concurrency=1 in MVP).
+// The orchestrator dispatches up to Config.Orchestrator.MaxConcurrentJobs
+// issues simultaneously, each in its own goroutine; the in-flight set is
+// guarded by Orchestrator.runningMu (see concurrency.go). Default
+// MaxConcurrentJobs is 1, preserving the original serial behavior.
 package orchestrator
 
 import (
@@ -12,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/logosc/symphony-go/internal/approval"
@@ -42,6 +45,11 @@ type Deps struct {
 	WorkspaceMgr *workspace.Manager
 	// AgentRunner runs the planner / implementer agent subprocess.
 	AgentRunner runner.AgentRunner
+	// AgentRunnersByAxis maps axis keys (matching Job.AxisKey, including
+	// "default") to per-axis runners. Populated by main.go when
+	// agent.provider_by_label or agent.model_by_label is set. When empty,
+	// the orchestrator uses Deps.AgentRunner for every job.
+	AgentRunnersByAxis map[string]runner.AgentRunner
 	// Reviewer drives the auto-mode reviewer. May be nil; required only
 	// when approval.mode == "auto" and at least one rule sets
 	// reviewer_required: true.
@@ -85,9 +93,16 @@ type Deps struct {
 // Orchestrator is the M4 entry point. Construct via New.
 type Orchestrator struct {
 	deps Deps
+	// runningMu guards all reads/writes of running. Use the tryClaim,
+	// release, and inflightCount helpers in concurrency.go rather than
+	// touching the map directly.
+	runningMu sync.Mutex
 	// running holds the issue numbers currently being processed in this
-	// process (always 0 or 1 in the MVP).
+	// process. Bounded by Config.Orchestrator.MaxConcurrentJobs.
 	running map[int]struct{}
+	// inflightWG tracks goroutines spawned by the dispatch loop so Run
+	// can drain on context cancellation.
+	inflightWG sync.WaitGroup
 }
 
 // New validates deps and returns an Orchestrator ready to Run.

@@ -5,9 +5,10 @@
 // Records carrying an integer attribute named "issue" or "issue_number"
 // are routed (in addition to the delegate) to a file named
 // "<rootDir>/{issue}.jsonl"; records without such an attribute are passed
-// through to the delegate only. Every string-valued attribute (including
-// values nested one level inside a group) is run through exec.Redact with
-// the configured patterns before being written to the audit file.
+// through to the delegate only. Every string-valued attribute (at any
+// nesting depth, up to maxRedactDepth levels) is run through exec.Redact
+// with the configured patterns before being written to the audit file.
+// slog.LogValuer values are resolved (via LogValue) before walking.
 //
 // See SPEC.md §13 for the event taxonomy and per-issue JSONL contract.
 package audit
@@ -23,6 +24,14 @@ import (
 
 	"github.com/logosc/symphony-go/internal/exec"
 )
+
+// maxRedactDepth bounds recursion into nested slog.GroupValue attrs while
+// walking a record for redaction. slog values cannot actually cycle
+// today, but this defensive cap makes the walker obviously terminating
+// and keeps stack usage bounded for pathological inputs (e.g. a future
+// LogValuer that returns ever-deeper groups). Beyond this depth, the
+// attribute is emitted as-is without further recursion.
+const maxRedactDepth = 16
 
 // Handler is a slog.Handler that writes records to a delegate handler and,
 // when the record carries an "issue" or "issue_number" int attribute, also
@@ -296,18 +305,27 @@ func (h *Handler) redactRecord(r slog.Record) slog.Record {
 	return out
 }
 
-// redactAttr returns a with any string-valued payload run through
-// exec.Redact. depth bounds recursion into group-valued attrs to one
-// level (so depth==0 will recurse once into a group, depth==1 will not).
+// redactAttr returns a with any string-valued payload (at any nesting
+// depth, up to maxRedactDepth) run through exec.Redact. Group-valued
+// attrs are walked recursively. slog.LogValuer values are resolved via
+// LogValue (already done by Value.Resolve) and then re-dispatched.
+//
+// depth tracks the current recursion level; when depth >= maxRedactDepth
+// the attribute is returned unchanged to ensure obvious termination.
+//
+// String elements buried inside slog.KindAny (arbitrary Go values such
+// as slices or maps of strings) are NOT redacted: walking them would
+// require reflection over arbitrary types, which is out of scope. Code
+// emitting secrets via KindAny should pre-redact or use slog.String.
 func (h *Handler) redactAttr(a slog.Attr, depth int) slog.Attr {
+	if depth >= maxRedactDepth {
+		return a
+	}
 	v := a.Value.Resolve()
 	switch v.Kind() {
 	case slog.KindString:
 		return slog.String(a.Key, exec.Redact(v.String(), h.redactPatterns))
 	case slog.KindGroup:
-		if depth >= 1 {
-			return a
-		}
 		inner := v.Group()
 		out := make([]slog.Attr, len(inner))
 		for i, ia := range inner {
@@ -315,6 +333,9 @@ func (h *Handler) redactAttr(a slog.Attr, depth int) slog.Attr {
 		}
 		return slog.Attr{Key: a.Key, Value: slog.GroupValue(out...)}
 	default:
+		// KindLogValuer is unreachable here because Value.Resolve already
+		// drove LogValue() to a fixed point; KindAny and primitives fall
+		// through unchanged.
 		return a
 	}
 }

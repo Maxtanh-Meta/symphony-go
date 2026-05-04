@@ -6,18 +6,44 @@ import (
 	"path/filepath"
 )
 
-// subscriptionAuthPaths is the list of HOME-relative directories that
-// claude/codex CLIs typically use to store authenticated subscription
-// state. Each one that exists in the user's real HOME is symlinked into
-// the agent's isolated HOME so the subprocess can read its existing
-// auth without us copying credentials.
+// subscriptionAuthPaths is the list of HOME-relative paths (directories
+// or files) that claude/codex CLIs typically use to store authenticated
+// subscription state. Each one that exists in the user's real HOME is
+// symlinked into the agent's isolated HOME so the subprocess can read
+// its existing auth without us copying credentials.
+//
+// Notable items:
+//   - `.claude.json` is a *file* (not a directory) holding the session/
+//     refresh token bookkeeping; `.claude/` is a sibling directory
+//     holding projects, memory, etc. Both are needed for headless
+//     `claude -p` to recognize the user as logged in.
+//   - On macOS, claude/codex store their OAuth tokens in the user's
+//     Login Keychain (queried via Security framework), which lives at
+//     `~/Library/Keychains/login.keychain-db`. Without that symlink,
+//     `security find-generic-password "Claude Code-credentials"` fails
+//     and the agent reports `Not logged in · Please run /login`.
+//
+// SECURITY NOTE — Keychain trade-off: symlinking `Library/Keychains`
+// gives the agent subprocess access to *every* item in the user's Login
+// Keychain (browser passwords, ssh-agent identities, third-party app
+// secrets), not just the Claude Code credential. This is a real
+// reduction of HOME-isolation guarantees in subscription mode. Operators
+// concerned about that should use API-key mode (set
+// env.allowlist=["ANTHROPIC_API_KEY"]) — that path doesn't need Keychain
+// access at all.
 //
 // Adjust when adding support for a new CLI's auth location.
 var subscriptionAuthPaths = []string{
 	".claude",
+	".claude.json",
 	".codex",
+	".codex.json",
 	".config/claude",
 	".config/codex",
+	// macOS — claude/codex use Keychain via the Security framework.
+	"Library/Keychains",
+	"Library/Application Support/Claude",
+	"Library/Caches/claude-cli-nodejs",
 }
 
 // seedSubscriptionAuth symlinks the user's real-HOME subscription-auth
@@ -36,8 +62,8 @@ func seedSubscriptionAuth(agentHome string) error {
 	}
 	for _, rel := range subscriptionAuthPaths {
 		src := filepath.Join(realHome, rel)
-		info, err := os.Stat(src)
-		if err != nil || !info.IsDir() {
+		if _, err := os.Stat(src); err != nil {
+			// Source doesn't exist (or unreadable) — skip silently.
 			continue
 		}
 		dst := filepath.Join(agentHome, rel)
