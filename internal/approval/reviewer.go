@@ -49,11 +49,11 @@ const reviewerPromptTmpl = "You are a code-review agent. You must inspect a prop
 	"You are read-only. Do not edit files. Inspect the repository if needed.\n" +
 	"\n" +
 	"End your response with the following EXACT block (a JSON object, with the\n" +
-	"fenced code block):\n" +
+	"fenced code block). Set decision to either approve or reject:\n" +
 	"\n" +
 	"## Decision\n" +
 	"```json\n" +
-	"{\"decision\": \"approve\" | \"reject\", \"reasons\": [\"...\", \"...\"]}\n" +
+	"{\"decision\": \"approve\", \"reasons\": [\"bounded and matches the issue\"]}\n" +
 	"```\n"
 
 // reviewerTmpl is the parsed prompt template. Parsed once at init so that
