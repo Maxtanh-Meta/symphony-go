@@ -14,6 +14,46 @@ The setup pattern is:
 6. Smoke each approval path.
 7. Leave a short validation run or longer soak running.
 
+## Fast path: guided scripts
+
+If you want the guided path, use the scripts first and then read the
+rest of this guide for the reasoning behind each generated file.
+
+```sh
+cd ~/Documents/Github/symphony-go
+
+scripts/onboard-project.sh \
+  --repo owner/project \
+  --local-path /Users/you/Documents/Github/project \
+  --auth app \
+  --approval handoff \
+  --agent claude \
+  --model sonnet
+```
+
+This creates labels, writes `~/.symphony-go/config.yml`, writes an env
+template at `~/.symphony-go/.env`, and copies `WORKFLOW.md` into the
+target repo if one does not exist.
+
+After filling credentials in the env file and committing `WORKFLOW.md`
+in the target repo, run:
+
+```sh
+set -a; source ~/.symphony-go/.env; set +a
+~/go/bin/symphony-go doctor --config ~/.symphony-go/config.yml
+
+scripts/onboard-smoke.sh \
+  --repo owner/project \
+  --config ~/.symphony-go/config.yml \
+  --env-file ~/.symphony-go/.env \
+  --run-once \
+  --status
+```
+
+The scripts are intentionally small Bash wrappers around `gh` and
+`symphony-go`; they do not create GitHub Apps or collect secret values
+for you.
+
 ## 0. Decide the operating model
 
 Before touching credentials, decide these knobs:

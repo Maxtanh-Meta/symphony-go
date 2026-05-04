@@ -141,6 +141,8 @@ and auto modes, and troubleshooting, see
 [`docs/M6-real-runner-smoke.md`](docs/M6-real-runner-smoke.md).
 For onboarding a brand-new project, use
 [`docs/new-project-onboarding.md`](docs/new-project-onboarding.md).
+The guided wrappers are `scripts/onboard-project.sh` and
+`scripts/onboard-smoke.sh`.
 
 ## Module path
 
