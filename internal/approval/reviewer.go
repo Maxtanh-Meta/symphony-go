@@ -134,9 +134,14 @@ func (r *Reviewer) Review(ctx context.Context, in ReviewInput) (types.ReviewerDe
 
 	dec, perr := ParseDecision(result.Text)
 	if perr != nil || (dec.Decision != "approve" && dec.Decision != "reject") {
+		snippet := truncate(strings.TrimSpace(result.Text), stderrTruncateLimit)
+		reason := "malformed reviewer output"
+		if snippet != "" {
+			reason = fmt.Sprintf("malformed reviewer output: %s", snippet)
+		}
 		return types.ReviewerDecision{
 			Decision: "reject",
-			Reasons:  []string{"malformed reviewer output"},
+			Reasons:  []string{reason},
 		}, nil
 	}
 	return dec, nil
