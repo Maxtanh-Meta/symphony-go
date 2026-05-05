@@ -242,10 +242,26 @@ func (o *Orchestrator) reconcileOne(ctx context.Context, issue types.Issue, job 
 		}
 
 	case types.StatusPRReady:
-		// Rows 15, 16.
+		// Rows 15, 16 + proposal 0005 §4.10 orphan recovery: only
+		// recover when the GH label is mid-active (planning,
+		// implementing, awaiting-approval) — that's the dropped-network
+		// case. Manual operator relabel to `ready` (intent: re-run) and
+		// other terminal states are left alone.
+		if isMidActive(lc, rl) {
+			return o.recoverOrphanedTerminal(ctx, issue, lc, cfg.Labels.PRReady, "pr_ready")
+		}
 		return false, nil
 
-	case types.StatusFailed, types.StatusBlocked:
+	case types.StatusFailed:
+		if isMidActive(lc, rl) {
+			return o.recoverOrphanedTerminal(ctx, issue, lc, cfg.Labels.Failed, "failed")
+		}
+		return false, nil
+
+	case types.StatusBlocked:
+		if isMidActive(lc, rl) {
+			return o.recoverOrphanedTerminal(ctx, issue, lc, cfg.Labels.Blocked, "blocked")
+		}
 		return false, nil
 	}
 	return false, errors.New("reconcile: no row matched (bug)")
@@ -263,6 +279,45 @@ func (o *Orchestrator) reconcileOrphan(ctx context.Context, issue types.Issue, c
 		o.deps.Logger.Warn("reconcile: post comment", "issue", issue.Number, "err", err)
 	}
 	o.deps.Logger.Info("reconcile_action", "issue", issue.Number, "action", "orphan_block", "reason", reason)
+	return true, nil
+}
+
+// isMidActive reports whether label is one of the mid-active GitHub
+// labels (planning, implementing, awaiting-approval). Used by orphan
+// recovery to scope re-relabel attempts: only when GH is showing work
+// in progress, not when an operator has manually relabeled to `ready`
+// (intent: re-run) or to another terminal state.
+func isMidActive(label string, rl reconcileLabels) bool {
+	switch label {
+	case strings.ToLower(rl.planning),
+		strings.ToLower(rl.implementing),
+		strings.ToLower(rl.awaitingApproval):
+		return true
+	}
+	return false
+}
+
+// recoverOrphanedTerminal re-attempts the GitHub-side label transition
+// when the local job is in a terminal state but the GitHub label still
+// shows an active state. Cause: a dropped network call between
+// markFailed/markPRReady and ReplaceStateLabel. Idempotent — removing
+// a label that's already absent and adding one already present are
+// both no-ops on the GitHub side. Does NOT re-post the failure /
+// completion comment to avoid duplicates: the original transition
+// path posted (or attempted to post) the comment, and reconciling
+// from a fresh tick has no way to know whether the prior POST
+// succeeded. Per proposal 0005 §4.10. Soft-fails on relabel error
+// (logs WARN, returns false-no-error) so the next tick retries.
+func (o *Orchestrator) recoverOrphanedTerminal(ctx context.Context, issue types.Issue, currentLabel, targetLabel, status string) (bool, error) {
+	if err := o.deps.GitHub.ReplaceStateLabel(ctx, issue.Number,
+		[]string{currentLabel}, []string{targetLabel}); err != nil {
+		o.deps.Logger.Warn("reconcile: orphan-terminal relabel",
+			"issue", issue.Number, "status", status, "err", err)
+		return false, nil
+	}
+	o.deps.Logger.Info("reconcile_action",
+		"issue", issue.Number, "action", "orphan_terminal_recovered",
+		"status", status, "from", currentLabel, "to", targetLabel)
 	return true, nil
 }
 

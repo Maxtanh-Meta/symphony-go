@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/logosc/symphony-go/internal/github"
 	"github.com/logosc/symphony-go/internal/types"
@@ -491,6 +492,87 @@ func TestReconcileRow18_ClosedNonTerminal(t *testing.T) {
 	// Local job file still loadable.
 	if _, err := h.state.Load(218); err != nil {
 		t.Fatalf("expected local job to remain, got err %v", err)
+	}
+}
+
+// TestReconcileOrphanedFailed_RecoversLabel: local job is `failed` but
+// the GitHub label still shows an active state (e.g. `implementing`)
+// because a network blip dropped the previous ReplaceStateLabel call.
+// Reconcile must re-attempt the relabel idempotently. Per proposal
+// 0005 §4.10. Regression for the dreamwright session split-brain.
+func TestReconcileOrphanedFailed_RecoversLabel(t *testing.T) {
+	h := newTestHarness(t)
+	o := h.newOrch(t, "x", false)
+	iss := types.Issue{Number: 920, Title: "stuck failed", State: "open",
+		Labels: []string{h.cfg.Labels.Implementing}}
+	h.gh.SeedIssue(iss, false)
+	job := &types.Job{
+		IssueNumber: 920, Repo: h.cfg.Repo.FullName,
+		Status: types.StatusFailed, Branch: "symphony/issue-920",
+	}
+	if err := h.state.Save(job); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := o.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !findLabel(h.labelsFor(920), h.cfg.Labels.Failed) {
+		t.Fatalf("expected failed label, got %v", h.labelsFor(920))
+	}
+	if findLabel(h.labelsFor(920), h.cfg.Labels.Implementing) {
+		t.Fatalf("implementing label not removed, got %v", h.labelsFor(920))
+	}
+}
+
+// TestReconcileOrphanedFailed_NoCommentDuplicate: orphan recovery must
+// NOT post a new failure comment (the original markFailed already
+// posted one, or attempted to). Reconcile is idempotent only on the
+// label transition.
+func TestReconcileOrphanedFailed_NoCommentDuplicate(t *testing.T) {
+	h := newTestHarness(t)
+	o := h.newOrch(t, "x", false)
+	iss := types.Issue{Number: 921, Title: "no dup comment", State: "open",
+		Labels: []string{h.cfg.Labels.Planning}}
+	h.gh.SeedIssue(iss, false)
+	job := &types.Job{
+		IssueNumber: 921, Repo: h.cfg.Repo.FullName,
+		Status: types.StatusFailed, Branch: "symphony/issue-921",
+	}
+	if err := h.state.Save(job); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	before, _ := h.gh.ListIssueComments(context.Background(), 921, time.Time{})
+	if err := o.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	after, _ := h.gh.ListIssueComments(context.Background(), 921, time.Time{})
+	commentsBefore, commentsAfter := len(before), len(after)
+	if commentsAfter != commentsBefore {
+		t.Fatalf("orphan recovery posted a comment: before=%d after=%d", commentsBefore, commentsAfter)
+	}
+}
+
+// TestReconcileOrphanedBlocked_RecoversLabel: same as above but for
+// StatusBlocked. Symmetry check that the new orphan recovery applies
+// to all three terminal local states.
+func TestReconcileOrphanedBlocked_RecoversLabel(t *testing.T) {
+	h := newTestHarness(t)
+	o := h.newOrch(t, "x", false)
+	iss := types.Issue{Number: 922, Title: "stuck blocked", State: "open",
+		Labels: []string{h.cfg.Labels.AwaitingApproval}}
+	h.gh.SeedIssue(iss, false)
+	job := &types.Job{
+		IssueNumber: 922, Repo: h.cfg.Repo.FullName,
+		Status: types.StatusBlocked, Branch: "symphony/issue-922",
+	}
+	if err := h.state.Save(job); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := o.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !findLabel(h.labelsFor(922), h.cfg.Labels.Blocked) {
+		t.Fatalf("expected blocked label, got %v", h.labelsFor(922))
 	}
 }
 
