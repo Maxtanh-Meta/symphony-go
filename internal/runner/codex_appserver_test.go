@@ -246,6 +246,54 @@ func TestCodexAppServer_MalformedLineSkipped(t *testing.T) {
 	}
 }
 
+func TestCodexAppServer_RespondsToCommandApprovalRequest(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash-based test")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "codex")
+	script := "#!/usr/bin/env bash\nset -u\n" +
+		"IFS= read -r _line\n" +
+		"printf '%s\\n' " + shellQuote(rpcResponse(1, `{"protocolVersion":"1"}`)) + "\n" +
+		"IFS= read -r _line\n" +
+		"IFS= read -r _line\n" +
+		"printf '%s\\n' " + shellQuote(rpcResponse(2, `{"thread":{"id":"th_abc"}}`)) + "\n" +
+		"IFS= read -r _line\n" +
+		"printf '%s\\n' " + shellQuote(rpcResponse(3, `{"turn":{"id":"tr_1"}}`)) + "\n" +
+		"printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"item/commandExecution/requestApproval\",\"params\":{\"threadId\":\"th_abc\",\"turnId\":\"tr_1\",\"itemId\":\"item_1\",\"command\":\"rg TODO\",\"cwd\":\"/tmp\"}}'\n" +
+		"IFS= read -r approval\n" +
+		"case \"$approval\" in *'\"id\":99'*'\"decision\":\"accept\"'*) ;; *) echo \"bad approval: $approval\" >&2; exit 7;; esac\n" +
+		"printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"method\":\"item.completed\",\"params\":{\"item_type\":\"agent_message\",\"text\":\"approved\"}}'\n" +
+		"printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"method\":\"turn.completed\",\"params\":{\"status\":\"completed\"}}'\n" +
+		"cat >/dev/null\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake: %v", err)
+	}
+
+	cr := newAppServerRunnerForTest().WithCommand(path)
+	home := filepath.Join(dir, "home")
+	repo := filepath.Join(dir, "repo")
+	_ = os.MkdirAll(home, 0o755)
+	_ = os.MkdirAll(repo, 0o755)
+
+	res, err := cr.Run(context.Background(), types.RunRequest{
+		Phase:    types.PhasePlanning,
+		Prompt:   "x",
+		RepoPath: repo,
+		HomePath: home,
+		Timeout:  10 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Success {
+		t.Errorf("expected Success=true, stderr=%q events=%q", res.Stderr, string(res.Events))
+	}
+	if res.Text != "approved" {
+		t.Errorf("Text = %q, want approved", res.Text)
+	}
+}
+
 func TestSandboxFromArgs(t *testing.T) {
 	cases := []struct {
 		args []string

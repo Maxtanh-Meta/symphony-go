@@ -173,6 +173,7 @@ type codexSession struct {
 
 	// Pending request demultiplexing.
 	mu        sync.Mutex
+	writeMu   sync.Mutex
 	nextID    int64
 	pending   map[int64]chan *jsonrpcMessage
 	notifyCh  chan *jsonrpcMessage // unbuffered fan-out for notifications
@@ -191,6 +192,7 @@ type codexSession struct {
 	// > 0 and is nil otherwise; the helper methods on stallWatchdog tolerate
 	// a nil receiver.
 	watchdog *stallWatchdog
+	sandbox  string
 }
 
 // openSession spawns `codex app-server`, drives initialize → initialized →
@@ -249,6 +251,7 @@ func (cr *CodexRunner) openSessionWithWatchdog(ctx context.Context, req types.Ru
 		notifyCh:  make(chan *jsonrpcMessage, 256),
 		startedAt: time.Now(),
 		watchdog:  watchdog,
+		sandbox:   sandbox,
 	}
 
 	// Stderr copier — mutex-guarded buffer.
@@ -362,10 +365,12 @@ func (s *codexSession) dispatch(msg *jsonrpcMessage) {
 		close(ch)
 		return
 	}
-	// Notification or server-initiated request — currently we only consume
-	// notifications. Drop server requests with a warning.
+	// Server-initiated requests, such as command execution approval, must
+	// receive JSON-RPC responses or the Codex turn can wait indefinitely.
 	if msg.ID != nil {
-		slog.Warn("codex app-server: unsolicited request from server ignored", "method", msg.Method)
+		if err := s.handleServerRequest(msg); err != nil {
+			slog.Warn("codex app-server: server request response failed", "method", msg.Method, "err", err.Error())
+		}
 		return
 	}
 	select {
@@ -382,6 +387,44 @@ func (s *codexSession) dispatch(msg *jsonrpcMessage) {
 		case s.notifyCh <- msg:
 		default:
 		}
+	}
+}
+
+// handleServerRequest answers JSON-RPC requests initiated by the app-server.
+// These mirror the generated Codex protocol bindings:
+//
+//   - item/commandExecution/requestApproval -> {decision:"accept"}
+//   - item/fileChange/requestApproval       -> {decision:"accept"|"decline"}
+//   - execCommandApproval                   -> {decision:"approved"}
+//   - applyPatchApproval                    -> {decision:"approved"|"denied"}
+//
+// Command approvals still execute inside the thread sandbox selected at
+// thread/start. File writes are only approved for workspace-write and
+// danger-full-access phases; read-only planning keeps file changes denied.
+func (s *codexSession) handleServerRequest(msg *jsonrpcMessage) error {
+	if msg == nil || msg.ID == nil {
+		return nil
+	}
+	switch msg.Method {
+	case "item/commandExecution/requestApproval":
+		return s.writeResponse(*msg.ID, map[string]any{"decision": "accept"})
+	case "execCommandApproval":
+		return s.writeResponse(*msg.ID, map[string]any{"decision": "approved"})
+	case "item/fileChange/requestApproval":
+		decision := "decline"
+		if s.sandbox == "workspace-write" || s.sandbox == "danger-full-access" {
+			decision = "accept"
+		}
+		return s.writeResponse(*msg.ID, map[string]any{"decision": decision})
+	case "applyPatchApproval":
+		decision := "denied"
+		if s.sandbox == "workspace-write" || s.sandbox == "danger-full-access" {
+			decision = "approved"
+		}
+		return s.writeResponse(*msg.ID, map[string]any{"decision": decision})
+	default:
+		slog.Warn("codex app-server: unsupported server request declined", "method", msg.Method)
+		return s.writeErrorResponse(*msg.ID, -32601, "unsupported server request")
 	}
 }
 
@@ -445,9 +488,44 @@ func (s *codexSession) writeFrame(id int64, method string, params any) error {
 	if err != nil {
 		return fmt.Errorf("codex app-server: marshal %s: %w", method, err)
 	}
+	return s.writeJSONLine(data, method)
+}
+
+func (s *codexSession) writeResponse(id json.RawMessage, result any) error {
+	frame := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      json.RawMessage(id),
+		"result":  result,
+	}
+	data, err := json.Marshal(frame)
+	if err != nil {
+		return fmt.Errorf("codex app-server: marshal response: %w", err)
+	}
+	return s.writeJSONLine(data, "response")
+}
+
+func (s *codexSession) writeErrorResponse(id json.RawMessage, code int, message string) error {
+	frame := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      json.RawMessage(id),
+		"error": map[string]any{
+			"code":    code,
+			"message": message,
+		},
+	}
+	data, err := json.Marshal(frame)
+	if err != nil {
+		return fmt.Errorf("codex app-server: marshal error response: %w", err)
+	}
+	return s.writeJSONLine(data, "error response")
+}
+
+func (s *codexSession) writeJSONLine(data []byte, label string) error {
 	data = append(data, '\n')
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	if _, err := s.stdin.Write(data); err != nil {
-		return fmt.Errorf("codex app-server: write %s: %w", method, err)
+		return fmt.Errorf("codex app-server: write %s: %w", label, err)
 	}
 	return nil
 }
