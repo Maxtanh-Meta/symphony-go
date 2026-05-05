@@ -131,6 +131,10 @@ type codexEvent struct {
 	Type     string `json:"type"`
 	ItemType string `json:"item_type"`
 	Text     string `json:"text"`
+	Item     struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"item"`
 }
 
 // Run implements runner.AgentRunner for the Codex CLI in `exec` mode.
@@ -223,11 +227,19 @@ func (cr *CodexRunner) Run(ctx context.Context, req types.RunRequest) (types.Run
 		case "turn.completed", "turn.failed", "error":
 			lastTerminal = ev.Type
 		case "item.completed":
-			if ev.ItemType == "agent_message" && ev.Text != "" {
-				textParts = append(textParts, ev.Text)
+			itemType := ev.ItemType
+			text := ev.Text
+			if itemType == "" {
+				itemType = ev.Item.Type
+			}
+			if text == "" {
+				text = ev.Item.Text
+			}
+			if itemType == "agent_message" && text != "" {
+				textParts = append(textParts, text)
 				anyAgentMsg = true
-			} else if ev.Text != "" {
-				fallbackTexts = append(fallbackTexts, ev.Text)
+			} else if text != "" {
+				fallbackTexts = append(fallbackTexts, text)
 			}
 		default:
 			if ev.Text != "" {

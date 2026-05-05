@@ -296,6 +296,41 @@ printf '%s\n' '{"type":"turn.completed"}'`
 	}
 }
 
+func TestCodexParsesNestedAgentMessageText(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash-script-based test")
+	}
+	dir := t.TempDir()
+	body := `printf '%s\n' '{"type":"thread.started","thread_id":"test"}'
+printf '%s\n' '{"type":"turn.started"}'
+printf '%s\n' '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Hello from nested event."}}'
+printf '%s\n' '{"type":"turn.completed"}'`
+	path := writeFakeCodex(t, dir, body, 0)
+
+	cr := newCodexRunnerForTest().WithCommand(path)
+	home := filepath.Join(dir, "home")
+	repo := filepath.Join(dir, "repo")
+	_ = os.MkdirAll(home, 0o755)
+	_ = os.MkdirAll(repo, 0o755)
+
+	res, err := cr.Run(context.Background(), types.RunRequest{
+		Phase:    types.PhasePlanning,
+		Prompt:   "go",
+		RepoPath: repo,
+		HomePath: home,
+		Timeout:  10 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Success {
+		t.Errorf("expected Success, got false; stderr=%q", res.Stderr)
+	}
+	if res.Text != "Hello from nested event." {
+		t.Errorf("Text = %q, want nested agent text", res.Text)
+	}
+}
+
 func TestCodexTurnFailedNotSuccess(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("bash-script-based test")
