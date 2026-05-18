@@ -587,9 +587,6 @@ func (o *Orchestrator) runImplementation(ctx context.Context, job *types.Job, is
 	job.PRNumber = pr.Number
 	log.Info("pr_created", "number", pr.Number, "url", pr.URL)
 
-	// 17a. Run code review on the diff (best-effort, non-blocking).
-	o.runPostPRCodeReview(ctx, job, issue, pr.Number)
-
 	// 17. PR-link comment + label.
 	_, _ = o.deps.GitHub.PostIssueComment(ctx, issue.Number, fmt.Sprintf("[symphony-go] opened PR #%d: %s", pr.Number, pr.URL))
 	if err := o.deps.GitHub.ReplaceStateLabel(ctx, issue.Number,
@@ -597,7 +594,14 @@ func (o *Orchestrator) runImplementation(ctx context.Context, job *types.Job, is
 		return err
 	}
 	job.Status = types.StatusPRReady
-	return o.saveJob(job)
+	if err := o.saveJob(job); err != nil {
+		return err
+	}
+
+	// 18. Supplementary post-PR code review (best-effort, purely
+	// informational — never mutates job state, even on "reject").
+	o.runPostPRCodeReview(ctx, issue, pr.Number)
+	return nil
 }
 
 // runImplementationAgent drives the implementation phase. When multi-turn
@@ -1217,9 +1221,13 @@ func (o *Orchestrator) resolveValidationCommands(job *types.Job) ([]string, erro
 var _ = errors.New // silence unused import if ever
 
 // runPostPRCodeReview runs the reviewer agent on the actual code diff
-// (not just the plan) and posts the review as a PR comment. This is a
-// best-effort step — failure does not block the PR from being created.
-func (o *Orchestrator) runPostPRCodeReview(ctx context.Context, job *types.Job, issue types.Issue, prNumber int) {
+// (not just the plan) and posts the review as a PR comment. Purely
+// informational: it never mutates job state and never triggers a
+// revision. A "reject" decision is surfaced as a "Changes Requested"
+// comment for human follow-up; the orchestration state machine is
+// unaffected. The `job` is intentionally not passed in so the function
+// physically cannot mutate it.
+func (o *Orchestrator) runPostPRCodeReview(ctx context.Context, issue types.Issue, prNumber int) {
 	log := o.deps.Logger.With("issue", issue.Number, "pr", prNumber)
 	cfg := o.deps.Config
 
@@ -1230,8 +1238,9 @@ func (o *Orchestrator) runPostPRCodeReview(ctx context.Context, job *types.Job, 
 
 	layout := workspace.LayoutFor(o.deps.WorkspaceRoot, issue.Number, workspace.SanitizeSlug(issue.Title))
 
-	// Get the diff against base branch.
-	diffCmd := exec.CommandContext(ctx, "git", "-C", layout.RepoPath, "diff", cfg.Repo.BaseBranch+"..HEAD")
+	// Get the diff against base branch (three-dot, origin-prefixed — matches
+	// gitDiffNameOnly and the rest of the codebase).
+	diffCmd := exec.CommandContext(ctx, "git", "-C", layout.RepoPath, "diff", "origin/"+cfg.Repo.BaseBranch+"...HEAD")
 	diffOut, err := diffCmd.Output()
 	if err != nil {
 		log.Warn("code_review_diff_failed", "err", err)
@@ -1249,7 +1258,9 @@ func (o *Orchestrator) runPostPRCodeReview(ctx context.Context, job *types.Job, 
 		diffStr = diffStr[:30000] + "\n... (truncated)"
 	}
 
-	// Build a code review prompt (fixed, not user-controlled).
+	// Build a code review prompt (fixed, not user-controlled). The trailing
+	// `## Decision` + fenced JSON block matches approval.ParseDecision so
+	// the result can be parsed via the standard reviewer flow.
 	prompt := fmt.Sprintf(`You are a code review agent. Review this diff for a GitHub pull request.
 
 Issue: #%d %s
@@ -1268,10 +1279,11 @@ Review the code for:
 If the code looks good, say so briefly. If there are issues, list them clearly.
 
 End your response with:
+
 ## Decision
-`+"```json\n"+`{"decision": "approve", "reasons": ["summary of review"]}
+`+"```json\n"+`{"decision": "approve", "reasons": ["summary"]}
 `+"```\n"+`
-Set decision to "approve" if the code is acceptable, or "reject" if changes are needed.
+Set decision to "approve" if code is acceptable, "reject" if changes needed.
 `, issue.Number, issue.Title, issue.Description, diffStr)
 
 	reviewerHome := filepath.Join(o.deps.WorkspaceRoot, ".symphony-go", "review-homes",
@@ -1291,7 +1303,8 @@ Set decision to "approve" if the code is acceptable, or "reject" if changes are 
 		return
 	}
 
-	// Post review as a comment on the PR.
+	// Post review as a comment on the PR. Even a "reject" decision is
+	// purely informational here — no triggerRevision, no state changes.
 	reasons := strings.Join(result.Reasons, "\n")
 	var body string
 	if result.Decision == "approve" {
