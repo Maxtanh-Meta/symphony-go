@@ -1238,6 +1238,16 @@ func (o *Orchestrator) runPostPRCodeReview(ctx context.Context, issue types.Issu
 
 	layout := workspace.LayoutFor(o.deps.WorkspaceRoot, issue.Number, workspace.SanitizeSlug(issue.Title))
 
+	// Fetch origin/<base> so the ref is current. Without this, when
+	// multiple jobs run sequentially and earlier PRs get merged between
+	// runs, origin/<base> can be stale, causing the diff to include
+	// commits from previously-merged PRs.
+	fetchCmd := exec.CommandContext(ctx, "git", "-C", layout.RepoPath, "fetch", "origin", cfg.Repo.BaseBranch)
+	if fetchErr := fetchCmd.Run(); fetchErr != nil {
+		log.Warn("code_review_fetch_failed", "err", fetchErr)
+		// Continue anyway — the diff may still be correct if origin/<base> is recent.
+	}
+
 	// Get the diff against base branch (three-dot, origin-prefixed — matches
 	// gitDiffNameOnly and the rest of the codebase).
 	diffCmd := exec.CommandContext(ctx, "git", "-C", layout.RepoPath, "diff", "origin/"+cfg.Repo.BaseBranch+"...HEAD")
