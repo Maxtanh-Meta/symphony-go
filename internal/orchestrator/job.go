@@ -165,6 +165,14 @@ func (o *Orchestrator) ProcessIssue(ctx context.Context, issue types.Issue) erro
 		}
 		worktreeNew = true
 		log.Info("worktree_created", "path", layout.RepoPath)
+	} else {
+		// Existing worktree: reset any dirty state left over from a prior
+		// failed attempt. Without this, stale modifications cause the
+		// post-planning diff guard to reject every subsequent retry.
+		if err := gitResetWorktree(ctx, layout.RepoPath); err != nil {
+			return o.markBlocked(ctx, job, fmt.Sprintf("worktree reset: %v", err))
+		}
+		log.Info("worktree_reset", "path", layout.RepoPath)
 	}
 
 	// Symlink subscription-mode auth (~/.claude, ~/.codex, etc.) into the
@@ -897,6 +905,24 @@ func labelForStatus(cfg *config.Config, s types.JobStatus) string {
 		return cfg.Labels.Failed
 	}
 	return ""
+}
+
+// gitResetWorktree discards all uncommitted changes (staged and unstaged,
+// tracked and untracked) in the given repo path. This ensures a retry starts
+// from a clean state even if a prior attempt left dirty files behind.
+// Note: ignored files are preserved (no -x flag) so caches remain intact.
+func gitResetWorktree(ctx context.Context, repoPath string) error {
+	// Hard-reset index + working tree to HEAD. This handles both staged
+	// and unstaged modifications, unlike `git checkout -- .` which only
+	// restores the working tree from the index.
+	if err := runGit(ctx, repoPath, "reset", "--hard", "HEAD"); err != nil {
+		return fmt.Errorf("git reset --hard HEAD: %w", err)
+	}
+	// Remove untracked files and directories (but not ignored files).
+	if err := runGit(ctx, repoPath, "clean", "-fd"); err != nil {
+		return fmt.Errorf("git clean -fd: %w", err)
+	}
+	return nil
 }
 
 // gitStatusPorcelain runs `git -C repoPath status --porcelain`.
