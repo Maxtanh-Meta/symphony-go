@@ -345,10 +345,11 @@ func (o *Orchestrator) routeAuto(ctx context.Context, job *types.Job, issue type
 	}
 	log.Info("rule_matched", "index", match.Index, "reviewer_required", match.ReviewerRequired)
 
+	layout := workspace.LayoutFor(o.deps.WorkspaceRoot, issue.Number, workspace.SanitizeSlug(issue.Title))
+
 	if !match.ReviewerRequired {
 		job.ApprovalPath = types.ApprovalPathRules
 		log.Info("auto_approved", "path", "rules")
-		layout := workspace.LayoutFor(o.deps.WorkspaceRoot, issue.Number, workspace.SanitizeSlug(issue.Title))
 		env := internalexec.BuildAgentEnv(cfg.Env.Allowlist, cfg.Env.BlockPatterns, os.Environ(), layout.HomePath)
 		return o.runImplementation(ctx, job, issue, layout, env)
 	}
@@ -366,7 +367,7 @@ func (o *Orchestrator) routeAuto(ctx context.Context, job *types.Job, issue type
 	dec, rerr := o.deps.Reviewer.Review(ctx, approval.ReviewInput{
 		Issue:    issue,
 		PlanText: job.PlanText,
-		RepoPath: cfg.Repo.LocalPath,
+		RepoPath: layout.RepoPath,
 		HomePath: reviewerHome,
 	})
 	if rerr != nil {
