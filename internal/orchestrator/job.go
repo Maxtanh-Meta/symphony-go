@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	cryptorand "crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"math/big"
@@ -975,15 +976,36 @@ func runGit(ctx context.Context, repoPath string, args ...string) error {
 // DefaultPushFunc pushes branch to origin via `git -c http.extraheader=...
 // push origin <branch>`. The token is passed via -c so it is never written
 // to disk and the command env does not need to inherit GITHUB_TOKEN.
+//
+// Uses HTTP Basic auth (x-access-token:<token>) rather than Bearer, because
+// GitHub OAuth tokens (gho_*) and fine-grained PATs require Basic auth.
+// Bearer auth only works with GitHub App installation tokens (ghs_*).
+// Proxy env vars (https_proxy, http_proxy, no_proxy and uppercase variants)
+// are forwarded so the push can reach GitHub through corporate proxies.
 func DefaultPushFunc(ctx context.Context, repoPath, branch, token string) error {
 	args := []string{"-C", repoPath}
 	if token != "" {
-		args = append(args, "-c", "http.extraheader=AUTHORIZATION: bearer "+token)
+		basic := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
+		args = append(args, "-c", "http.extraheader=AUTHORIZATION: Basic "+basic)
 	}
 	args = append(args, "push", "origin", branch)
 	cmd := exec.CommandContext(ctx, "git", args...)
-	// Do NOT inherit env (especially GITHUB_TOKEN) — the credential is in args.
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME")}
+	// Build a minimal env: PATH, HOME, and proxy settings. GITHUB_TOKEN
+	// is intentionally excluded — the credential is in the extraheader.
+	env := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+	}
+	for _, key := range []string{
+		"https_proxy", "HTTPS_PROXY",
+		"http_proxy", "HTTP_PROXY",
+		"no_proxy", "NO_PROXY",
+	} {
+		if v := os.Getenv(key); v != "" {
+			env = append(env, key+"="+v)
+		}
+	}
+	cmd.Env = env
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
